@@ -19,7 +19,7 @@ class HttpServer:
     
     def connect(self):
         self.client_socket,self.client_address = server_socket.accept()
-        while(True):
+        while True:
             request = self.client_socket.recv(1024).decode()
             lines = request.split("\r\n")
             close = False

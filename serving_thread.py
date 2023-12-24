@@ -10,9 +10,48 @@ directory_path = "."
 subdirectories = [name for name in os.listdir(directory_path) if os.path.isdir(os.path.join(directory_path, name))]
 folder = "data"
 
+auth_path = "./userInfo.json"
+
+
+# used to check user info
+def authenticate(auth_info):
+    info = base64.b64decode(auth_info).decode()
+    info = info.split(":")
+    if len(info) != 2:
+        return False
+    username = info[0].strip()
+    password = info[1].strip()
+    if os.path.exists(auth_path):
+        auth_lock = ServerThread.file_locks[auth_path]
+        with auth_lock:
+            with open(auth_path, 'r') as auth_handler:
+                try:
+                    data = json.load(auth_handler)
+                    if data[username]["password"] == password:
+                        print(username, password)
+                        return True
+                    else:
+                        return False
+                except (json.decoder.JSONDecodeError, KeyError):
+                    return False
+    else:
+        return False
+
+
+# used to generate non-Auth header
+def Auth_Response(flag):
+    if flag:
+        head = b"HTTP/1.1 200 OK\r\n"
+    else:
+        head = b"HTTP/1.1 401 Unauthorized\r\n"
+        head += b"WWW-Authenticated: Basic realm='Authorization Required'\r\n"
+        head += b"\r\n"
+    return head
+
 
 class ServerThread(threading.Thread):
-    lock = threading.Lock()
+    auth_lock = threading.Lock()
+    file_locks = {auth_path: auth_lock}
 
     def __init__(self, client_socket, client_addr):
         threading.Thread.__init__(self)
@@ -22,22 +61,27 @@ class ServerThread(threading.Thread):
 
     def run(self):
         while True:
-            print("get request")
             request = self.client_socket.recv(1024).decode()
+            print("get request")
             lines = request.split("\r\n")
             authentication = False
             close = False
             url = None
+            head = None
 
             for line in lines:
                 if line.startswith("GET"):
+                    print("GET method")
                     contents = line.split(" ")
                     url = contents[1]
+                    print(url)
                 elif line.startswith("Connection:"):
+                    print("Check close request")
                     content = line.split(":", 1)[1].strip()
                     if content.lower() == "close":
                         close = True
                 elif line.startswith("Authorization:"):
+                    print("Have Auth Info")
                     content = line.split(" ")
                     if len(content) != 3:
                         # return 401
@@ -46,31 +90,24 @@ class ServerThread(threading.Thread):
                     auth_content = content[2].strip()
                     if auth_type != "Basic":
                         continue
-                    authentication = self.authenticate(auth_content)
+                    authentication = authenticate(auth_content)
+
+            head = Auth_Response(authentication)
 
             if not authentication:
-                head = (
-                        b"HTTP/1.1 401 Unauthorized\r\n"
-                        + b"WWW-Authenticated: Basic realm='Authorization Required'\r\n"
-                        + b"\r\n"
-                )
-                self.client_socket.sendall(head)
+                print("To send response")
+                a = self.client_socket.sendall(head)
+                print(a)
                 print("Not Authenticated")
             elif url is not None:
                 self.view(url)
+            else:
+                self.client_socket.sendall(head)
 
             if close:
                 self.client_socket.close()
                 print("closed")
                 break
-
-    def authenticate(self, author):
-        info = base64.b64decode(author)
-        info = info.split(":")
-        if len(info) != 2:
-            return False
-        username = info[0].strip()
-        password = info[1].strip()
 
     def view(self, url):
         parts = url.split("?")
