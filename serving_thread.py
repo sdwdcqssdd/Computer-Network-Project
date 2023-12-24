@@ -42,6 +42,7 @@ def authenticate(auth_info):
 def Auth_Response(flag):
     if flag:
         head = b"HTTP/1.1 200 OK\r\n"
+        head += b"\r\n"
     else:
         head = b"HTTP/1.1 401 Unauthorized\r\n"
         head += b"WWW-Authenticated: Basic realm='Authorization Required'\r\n"
@@ -50,6 +51,9 @@ def Auth_Response(flag):
 
 
 class ServerThread(threading.Thread):
+    # every file needs a lock, in case of read-write conflict
+    # key: root_path; value: file_lock
+    # need to add lock when upload a new file, and remove lock when delete a file
     auth_lock = threading.Lock()
     file_locks = {auth_path: auth_lock}
 
@@ -61,13 +65,16 @@ class ServerThread(threading.Thread):
 
     def run(self):
         while True:
-            request = self.client_socket.recv(1024).decode()
+            try:
+                request = self.client_socket.recv(1024).decode()
+            except ConnectionAbortedError:
+                self.client_socket.close()
+                break
             print("get request")
             lines = request.split("\r\n")
             authentication = False
             close = False
             url = None
-            head = None
 
             for line in lines:
                 if line.startswith("GET"):
@@ -89,6 +96,7 @@ class ServerThread(threading.Thread):
                     auth_type = content[1].strip()
                     auth_content = content[2].strip()
                     if auth_type != "Basic":
+                        # return 401
                         continue
                     authentication = authenticate(auth_content)
 
