@@ -11,6 +11,15 @@ directory_path = "."
 subdirectories = [name for name in os.listdir(directory_path) if os.path.isdir(os.path.join(directory_path, name))]
 folder = subdirectories[0]
 
+def ok():
+    return b"HTTP/1.1 200 OK\r\nSever: HTTPServer\r\n"
+
+def badRequest():
+    return b"HTTP/1.1 400 Bad request\r\nSever: HTTPServer\r\n"
+
+def fileNotFound():
+    return b"HTTP/1.1 404 File not found\r\nSever: HTTPServer\r\n"
+
 class HttpServer:
 
     def __init__(self):
@@ -55,8 +64,7 @@ class HttpServer:
             else:
                 if (parameter == "SUSTech-HTTP=0") or (parameter is None):
                     contents = os.listdir(addr)
-                    head = (b"HTTP/1.1 200 OK\r\n"
-                        + b"Sever: HTTPServer\r\n"
+                    head = (ok()
                         + b"Content-type: text/html; charset=utf-8\r\n"
                         )
                     content = (b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
@@ -84,8 +92,7 @@ class HttpServer:
                 elif parameter == "SUSTech-HTTP=1":
                     contents = os.listdir(addr)
                     content = json.dumps(contents)
-                    head = (b"HTTP/1.1 200 OK\r\n"
-                          + b"Sever: HTTPServer\r\n"
+                    head = (ok()
                           + b"Content-type: application/json\r\n"
                           + b"Content-Length: " + str(len(content)).encode('utf-8') + b"\r\n\r\n"
                     )
@@ -94,8 +101,7 @@ class HttpServer:
                     self.client_socket.sendall(response)
                     return 
                 else:
-                    head = (b"HTTP/1.1 400 Bad request\r\n"
-                            + b"Sever: HTTPServer\r\n"
+                    head = (badRequest()
                             + b"Content-type: text/html; charset=utf-8\r\n"
                                 )
                     content = (b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
@@ -117,8 +123,7 @@ class HttpServer:
                     self.client_socket.sendall(response)
                     return 
         else:
-            head = (b"HTTP/1.1 404 File not found\r\n"
-                  + b"Sever: HTTPServer\r\n"
+            head = (fileNotFound()
                   + b"Content-type: text/html; charset=utf-8\r\n"
                     )
             content = (b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
@@ -142,8 +147,7 @@ class HttpServer:
         
     def download(self,addr,parameter):
         mime_type, encoding = mimetypes.guess_type(addr)
-        head = (b"HTTP/1.1 200 OK\r\n"
-                + b"Sever: HTTPServer\r\n"
+        head = (ok()
                 + b"Content-type: " + mime_type.encode('utf-8')
                 )
         if encoding:
@@ -178,8 +182,7 @@ class HttpServer:
             return       
 
         else:
-            head = (b"HTTP/1.1 400 Bad request\r\n"
-                    + b"Sever: HTTPServer\r\n"
+            head = (badRequest()
                     + b"Content-type: text/html; charset=utf-8\r\n"
                     )
             content = (b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
@@ -204,7 +207,6 @@ class HttpServer:
 if __name__ == '__main__':
     server = HttpServer()
     server.connect()
-
 
 
 
