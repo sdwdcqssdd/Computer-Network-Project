@@ -1,16 +1,20 @@
 import base64
 import mimetypes
-import socket
 import threading
-import sys
 import os
 import json
+import shutil
 
 directory_path = "."
 subdirectories = [name for name in os.listdir(directory_path) if os.path.isdir(os.path.join(directory_path, name))]
 folder = "data"
 
+# the path of authentication information
 auth_path = "./userInfo.json"
+
+
+def ok():
+    return b"HTTP/1.1 200 OK\r\nSever: HTTPServer\r\n"
 
 
 # used to check user info
@@ -18,7 +22,7 @@ def authenticate(auth_info):
     info = base64.b64decode(auth_info).decode()
     info = info.split(":")
     if len(info) != 2:
-        return False
+        return False, None
     username = info[0].strip()
     password = info[1].strip()
     if os.path.exists(auth_path):
@@ -29,13 +33,13 @@ def authenticate(auth_info):
                     data = json.load(auth_handler)
                     if data[username]["password"] == password:
                         print(username, password)
-                        return True
+                        return True, username
                     else:
-                        return False
+                        return False, None
                 except (json.decoder.JSONDecodeError, KeyError):
-                    return False
+                    return False, None
     else:
-        return False
+        return False, None
 
 
 # used to generate non-Auth header
@@ -50,6 +54,7 @@ def Auth_Response(flag):
     return head
 
 
+# main server thread, handle requests of a user
 class ServerThread(threading.Thread):
     # every file needs a lock, in case of read-write conflict
     # key: root_path; value: file_lock
@@ -62,23 +67,32 @@ class ServerThread(threading.Thread):
         self.daemon = True
         self.client_socket = client_socket
         self.client_address = client_addr
+        self.username = None
 
     def run(self):
         while True:
             try:
                 request = self.client_socket.recv(1024).decode()
-            except ConnectionAbortedError:
+            except ConnectionAbortedError:  # in case the user close the connection suddenly without informing
                 self.client_socket.close()
                 break
             print("get request")
             lines = request.split("\r\n")
-            authentication = False
+            authentication = (self.username is None)  # username will be recorded after authentication
             close = False
             url = None
+            get = False
+            post = False
+            try:
+                body = request.split("\r\n\r\n")[1]
+            except IndexError:
+                self.client_socket.sendall(HTTP_400Error())
+                return
 
             for line in lines:
                 if line.startswith("GET"):
                     print("GET method")
+                    get = True
                     contents = line.split(" ")
                     url = contents[1]
                     print(url)
@@ -98,7 +112,13 @@ class ServerThread(threading.Thread):
                     if auth_type != "Basic":
                         # return 401
                         continue
-                    authentication = authenticate(auth_content)
+                    authentication, self.username = authenticate(auth_content)
+                elif line.startswith("POST"):
+                    print("POST Method")
+                    post = True
+                    contents = line.split(" ")
+                    url = contents[1]
+                    print(url)
 
             head = Auth_Response(authentication)
 
@@ -108,7 +128,10 @@ class ServerThread(threading.Thread):
                 print(a)
                 print("Not Authenticated")
             elif url is not None:
-                self.view(url)
+                if get:
+                    self.view(url)
+                if post:
+                    self.handle_post(url, body)
             else:
                 self.client_socket.sendall(head)
 
@@ -134,8 +157,7 @@ class ServerThread(threading.Thread):
             else:
                 if (parameter == "SUSTech-HTTP=0") or (parameter is None):
                     contents = os.listdir(addr)
-                    head = (b"HTTP/1.1 200 OK\r\n"
-                            + b"Sever: HTTPServer\r\n"
+                    head = (ok()
                             + b"Content-type: text/html; charset=utf-8\r\n"
                             )
                     content = (
@@ -165,8 +187,7 @@ class ServerThread(threading.Thread):
                 elif parameter == "SUSTech-HTTP=1":
                     contents = os.listdir(addr)
                     content = json.dumps(contents)
-                    head = (b"HTTP/1.1 200 OK\r\n"
-                            + b"Sever: HTTPServer\r\n"
+                    head = (ok()
                             + b"Content-type: application/json\r\n"
                             + b"Content-Length: " + str(len(content)).encode('utf-8') + b"\r\n\r\n"
                             )
@@ -175,57 +196,15 @@ class ServerThread(threading.Thread):
                     self.client_socket.sendall(response)
                     return
                 else:
-                    head = (b"HTTP/1.1 400 Bad request\r\n"
-                            + b"Sever: HTTPServer\r\n"
-                            + b"Content-type: text/html; charset=utf-8\r\n"
-                            )
-                    content = (
-                            b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
-                            + b'<html>\n'
-                            + b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
-                            + b'<title>Error response</title>\n'
-                            + b'</head>\n'
-                            + b'<body>\n'
-                            + b'<h1>Error response</h1>\n'
-                            + b'<p>Error code: 400</p>\n'
-                            + b'<p>Message: Bad request.</p>\n'
-                            + b'<p>Error code explanation: Request format is not invalid.</p>\n'
-                            + b'</body>\n'
-                            + b'</html>\n'
-                    )
-                    length = len(content)
-                    head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
-                    response = head + content
-                    self.client_socket.sendall(response)
+                    self.client_socket.sendall(HTTP_400Error())
                     return
         else:
-            head = (b"HTTP/1.1 404 File not found\r\n"
-                    + b"Sever: HTTPServer\r\n"
-                    + b"Content-type: text/html; charset=utf-8\r\n"
-                    )
-            content = (b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
-                       + b'<html>\n'
-                       + b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
-                       + b'<title>Error response</title>\n'
-                       + b'</head>\n'
-                       + b'<body>\n'
-                       + b'<h1>Error response</h1>\n'
-                       + b'<p>Error code: 404</p>\n'
-                       + b'<p>Message: File not found.</p>\n'
-                       + b'<p>Error code explanation: HTTPStatus.NOT_FOUND - Nothing matches the given URL.</p>\n'
-                       + b'</body>\n'
-                       + b'</html>\n'
-                       )
-            length = len(content)
-            head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
-            response = head + content
-            self.client_socket.sendall(response)
+            self.client_socket.sendall(HTTP_404Error())
             return
 
     def download(self, addr, parameter):
         mime_type, encoding = mimetypes.guess_type(addr)
-        head = (b"HTTP/1.1 200 OK\r\n"
-                + b"Sever: HTTPServer\r\n"
+        head = (ok()
                 + b"Content-type: " + mime_type.encode('utf-8')
                 )
         if encoding:
@@ -240,8 +219,6 @@ class ServerThread(threading.Thread):
             response = head + content
             self.client_socket.sendall(response)
             return
-
-
         elif parameter == 'chunked=1':
             head += b'Transfer-Encoding: chunked\r\n\r\n'
             self.client_socket.sendall(head)
@@ -260,25 +237,167 @@ class ServerThread(threading.Thread):
             return
 
         else:
-            head = (b"HTTP/1.1 400 Bad request\r\n"
-                    + b"Sever: HTTPServer\r\n"
-                    + b"Content-type: text/html; charset=utf-8\r\n"
-                    )
-            content = (b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
-                       + b'<html>\n'
-                       + b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
-                       + b'<title>Error response</title>\n'
-                       + b'</head>\n'
-                       + b'<body>\n'
-                       + b'<h1>Error response</h1>\n'
-                       + b'<p>Error code: 400</p>\n'
-                       + b'<p>Message: Bad request.</p>\n'
-                       + b'<p>Error code explanation: Request format is not invalid.</p>\n'
-                       + b'</body>\n'
-                       + b'</html>\n'
-                       )
-            length = len(content)
-            head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
-            response = head + content
-            self.client_socket.sendall(response)
+            self.client_socket.sendall(HTTP_400Error())
             return
+
+    def handle_post(self, url, body):
+        analyze = url.split("?")
+        if len(analyze != 2):
+            self.client_socket.sendall(HTTP_400Error())
+            return
+        else:
+            try:
+                func = analyze[0][-6:]
+                path = ""
+                if analyze[1].startswith("path="):
+                    try:
+                        path = analyze[1][6:]
+                        if path[0] == '/':
+                            path = "./data" + path
+                        else:
+                            path = "./data/" + path
+                        authority = path.split("/")[2]
+                        if authority != self.username:
+                            self.client_socket.sendall(HTTP_403Error())  # Not the current user's folder
+                            return
+                    except IndexError:
+                        # path is null
+                        self.client_socket.sendall(HTTP_400Error())
+                        return
+                else:
+                    self.client_socket.sendall(HTTP_400Error())  # Do not have parameter "path"
+                if func == "upload":
+                    self.upload(path, body)
+                elif func == "delete":
+                    self.delete(path)
+                else:
+                    self.client_socket.sendall(HTTP_400Error())
+                    return
+            except IndexError:
+                self.client_socket.sendall(HTTP_400Error())
+                return
+
+    def upload(self, path, body):
+        if path[-1] != '/':
+            path += "/"
+        if not os.path.isdir(path):
+            self.client_socket.sendall(HTTP_404Error())
+            return
+        else:
+            pass
+        # wait for the answer of the issue
+        response = ok() + b"\r\n"
+        self.client_socket.sendall(response)
+        return
+
+    def delete(self, path):
+        if not os.path.exists(path):
+            self.client_socket.sendall(HTTP_404Error())
+            return
+        if os.path.isfile(path):
+            os.remove(path)
+        else:
+            shutil.rmtree(path)
+        response = ok() + b"\r\n"
+        self.client_socket.sendall(response)
+        return
+
+
+# generate HTTP 400 Bad Request response
+def HTTP_400Error():
+    content = b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
+    content += b'<html>\n'
+    content += b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
+    content += b'<title>Error response</title>\n'
+    content += b'</head>\n'
+    content += b'<body>\n'
+    content += b'<h1>Error response</h1>\n'
+    content += b'<p>Error code: 400</p>\n'
+    content += b'<p>Message: Bad request.</p>\n'
+    content += b'<p>Error code explanation: Request format is not invalid.</p>\n'
+    content += b'</body>\n'
+    content += b'</html>\n'
+
+    head = b"HTTP/1.1 400 Bad request\r\n"
+    head += b"Sever: HTTPServer\r\n"
+    head += b"Content-type: text/html; charset=utf-8\r\n"
+    head += b"Content-Length: " + str(len(content)).encode('utf-8') + b'\r\n'
+    head += b"\r\n"
+
+    response = head + content
+    return response
+
+
+# generate HTTP 403 Forbidden response
+def HTTP_403Error():
+    content = b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
+    content += b'<html>\n'
+    content += b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
+    content += b'<title>Error response</title>\n'
+    content += b'</head>\n'
+    content += b'<body>\n'
+    content += b'<h1>Error response</h1>\n'
+    content += b'<p>Error code: 403</p>\n'
+    content += b'<p>Message: Forbidden.</p>\n'
+    content += b'<p>Error code explanation: Access to this resource on the server is denied.</p>\n'
+    content += b'</body>\n'
+    content += b'</html>\n'
+
+    head = b"HTTP/1.1 403 Forbidden\r\n"
+    head += b"Sever: HTTPServer\r\n"
+    head += b"Content-type: text/html; charset=utf-8\r\n"
+    head += b"Content-Length: " + str(len(content)).encode('utf-8') + b'\r\n'
+    head += b"\r\n"
+
+    response = head + content
+    return response
+
+
+# generate HTTP 404 File not found response
+def HTTP_404Error():
+    content = b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
+    content += b'<html>\n'
+    content += b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
+    content += b'<title>Error response</title>\n'
+    content += b'</head>\n'
+    content += b'<body>\n'
+    content += b'<h1>Error response</h1>\n'
+    content += b'<p>Error code: 404</p>\n'
+    content += b'<p>Message: File not found.</p>\n'
+    content += b'<p>Error code explanation: HTTPStatus.NOT_FOUND - Nothing matches the given URL.</p>\n'
+    content += b'</body>\n'
+    content += b'</html>\n'
+
+    head = b"HTTP/1.1 404 File not found\r\n"
+    head += b"Sever: HTTPServer\r\n"
+    head += b"Content-type: text/html; charset=utf-8\r\n"
+    head += b"Content-Length: " + str(len(content)).encode('utf-8') + b'\r\n'
+    head += b"\r\n"
+
+    response = head + content
+    return response
+
+
+# generate HTTP 405 Method Not Allowed response
+def HTTP_405Error():
+    content = b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
+    content += b'<html>\n'
+    content += b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
+    content += b'<title>Error response</title>\n'
+    content += b'</head>\n'
+    content += b'<body>\n'
+    content += b'<h1>Error response</h1>\n'
+    content += b'<p>Error code: 405</p>\n'
+    content += b'<p>Message: Method Not Allowed.</p>\n'
+    content += b'<p>Error code explanation: The requested method is not allowed for the specified resource.</p>\n'
+    content += b'</body>\n'
+    content += b'</html>\n'
+
+    head = b"HTTP/1.1 405 Method Not Allowed\r\n"
+    head += b"Sever: HTTPServer\r\n"
+    head += b"Content-type: text/html; charset=utf-8\r\n"
+    head += b"Content-Length: " + str(len(content)).encode('utf-8') + b'\r\n'
+    head += b"\r\n"
+
+    response = head + content
+    return response
