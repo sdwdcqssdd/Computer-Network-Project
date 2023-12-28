@@ -62,6 +62,7 @@ class ServerThread(threading.Thread):
                 self.client_socket.close()
                 break
             print("get request")
+            print(repr(request))
             lines = request.split("\r\n")
             authentication = (self.username is None)  # username will be recorded after authentication
             close = False
@@ -224,7 +225,8 @@ class ServerThread(threading.Thread):
 
     def handle_post(self, url, body):
         analyze = url.split("?")
-        if len(analyze != 2):
+        print(analyze)
+        if len(analyze) != 2:
             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
             return
         else:
@@ -233,12 +235,14 @@ class ServerThread(threading.Thread):
                 path = ""
                 if analyze[1].startswith("path="):
                     try:
-                        path = analyze[1][6:]
+                        path = analyze[1][5:]
                         if path[0] == '/':
                             path = "./data" + path
                         else:
                             path = "./data/" + path
+                        print(path)
                         authority = path.split("/")[2]
+                        print(authority)
                         if authority != self.username:
                             self.client_socket.sendall(
                                 ResponseFactory.http_403_forbidden())  # Not the current user's folder
@@ -263,6 +267,7 @@ class ServerThread(threading.Thread):
     def upload(self, path, body):
         if path[-1] != '/':
             path += "/"
+        print(path)
         if not os.path.isdir(path):
             self.client_socket.sendall(ResponseFactory.http_404_not_found())
             return
