@@ -75,6 +75,13 @@ class ServerThread(threading.Thread):
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
 
+            if lines[0].startswith('GET'):
+                pass
+            elif lines[0].startswith('POST'):
+                pass
+            else:
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+            
             for line in lines:
                 if line.startswith("GET"):
                     print("GET method")
@@ -108,9 +115,8 @@ class ServerThread(threading.Thread):
 
             if not authentication:
                 self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
-                print("Not Authenticated")
-                continue
-            if url is not None:
+                print("Not Authenticated")  # go to verify if the client want to close connection after this request
+            elif url is not None:
                 if get:
                     self.view(url)
                 if post:
@@ -133,6 +139,13 @@ class ServerThread(threading.Thread):
             addr = parts[0]
             addr = folder + addr
             parameter = parts[1]
+        if (parameter == "SUSTech-HTTP=0") or (parameter is None):
+            pass
+        elif parameter == "SUSTech-HTTP=1":
+            pass
+        else:
+            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+            return
         if os.path.exists(addr):
             if os.path.isfile(addr):
                 self.download(addr, parameter)
@@ -187,22 +200,43 @@ class ServerThread(threading.Thread):
 
     def download(self, addr, parameter):
         mime_type, encoding = mimetypes.guess_type(addr)
-        head = (ResponseFactory.http_200_ok()
-                + b"Content-type: " + mime_type.encode('utf-8')
-                )
+        head = (ResponseFactory.http_200_ok() + b"Content-type: ")
+        if mime_type:
+            head += mime_type.encode('utf-8')
+        else:
+            head += b'application/octet-stream'    
         if encoding:
             head += b"; charset=" + encoding.encode('utf-8')
         head += b"\r\n"
         with open(addr, 'rb') as f:
             content = f.read()
 
-        if (parameter is None) or parameter.startswith("SUSTech-HTTP=") or parameter == 'chunked=0':
+        chuncked = False
+        para = parameter.split("&")
+        for p in para:
+            arg, val = p.split('=')
+            if arg == 'SUSTech-HTTP':
+                continue
+            elif arg == 'chunked':
+                if val == '0':
+                    chuncked = False
+                elif val == '1':
+                    chuncked = True
+                else:
+                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    return
+            else:
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                return            
+
+
+        if chuncked:
             length = len(content)
             head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
             response = head + content
             self.client_socket.sendall(response)
             return
-        elif parameter == 'chunked=1':
+        else:
             head += b'Transfer-Encoding: chunked\r\n\r\n'
             self.client_socket.sendall(head)
 
@@ -217,10 +251,6 @@ class ServerThread(threading.Thread):
                     chunk = chunk_length + chunk_data
                     self.client_socket.sendall(chunk)
             self.client_socket.sendall(b'0\r\n\r\n')
-            return
-
-        else:
-            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
             return
 
     def handle_post(self, url, body):
