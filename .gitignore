@@ -6,4 +6,4 @@
 /.idea/vcs.xml
 /.idea/.name
 __pycache__/serving_thread.cpython-311.pyc
-/__pycache__
+__pycache__/
