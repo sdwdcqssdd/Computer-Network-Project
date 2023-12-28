@@ -152,7 +152,7 @@ class ServerThread(threading.Thread):
                 self.client_socket.sendall(ResponseFactory.http_200_ok())
                 return 
             else:
-                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                self.client_socket.sendall(ResponseFactory.http_404_not_found())
                 return
 
 
