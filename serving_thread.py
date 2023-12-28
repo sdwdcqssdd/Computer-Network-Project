@@ -18,7 +18,7 @@ auth_path = "./userInfo.json"
 def authenticate(auth_info):
     info = base64.b64decode(auth_info).decode()
     info = info.split(":")
-    if len(info) != 2:
+    if len(info) != 2:  # format error
         return False, None
     username = info[0].strip()
     password = info[1].strip()
@@ -29,13 +29,16 @@ def authenticate(auth_info):
                 try:
                     data = json.load(auth_handler)
                     if data[username]["password"] == password:
-                        print(username, password)
+                        print("Auth info:", username, password)
                         return True, username
                     else:
+                        # password wrong
                         return False, None
                 except (json.decoder.JSONDecodeError, KeyError):
+                    # no such user
                     return False, None
     else:
+        # file not found (server's mistake)
         return False, None
 
 
@@ -61,8 +64,8 @@ class ServerThread(threading.Thread):
             except ConnectionAbortedError:  # in case the user close the connection suddenly without informing
                 self.client_socket.close()
                 break
-            print("get request")
-            print(repr(request))
+            print("get a request")
+            print("request content:", repr(request))
             lines = request.split("\r\n")
             authentication = (self.username is None)  # username will be recorded after authentication
             close = False
@@ -70,11 +73,12 @@ class ServerThread(threading.Thread):
             get = False
             post = False
             Head = False
-            try:
-                body = request.split("\r\n\r\n")[1]
-            except IndexError:
-                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                return
+            boundary = None
+            # try:
+            #     body = request.split("\r\n\r\n")[1]
+            # except IndexError:
+            #     self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+            #     return
 
             if lines[0].startswith('GET'):
                 pass
@@ -101,12 +105,12 @@ class ServerThread(threading.Thread):
                     print("Have Auth Info")
                     content = line.split(" ")
                     if len(content) != 3:
-                        # authentication should be False
+                        # format error, authentication should be False
                         continue
                     auth_type = content[1].strip()
                     auth_content = content[2].strip()
                     if auth_type != "Basic":
-                        # authentication should be False
+                        # only accept Basic, authentication should be False
                         continue
                     authentication, self.username = authenticate(auth_content)
                 elif line.startswith("POST"):
@@ -120,16 +124,20 @@ class ServerThread(threading.Thread):
                     Head = True
                     contents = line.split(" ")
                     url = contents[1]
-                    print(url)   
+                    print(url)
+                elif line.startswith("Content-Type:"):
+                    bound = line.split("boundary=")
+                    if len(bound) == 2:
+                        boundary = bound[1]
 
             if not authentication:
                 self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
-                print("Not Authenticated")  # go to verify if the client want to close connection after this request
+                print("Authentication Failed")  # go to verify if the client want to close connection after this request
             elif url is not None:
                 if get:
                     self.view(url)
                 if post:
-                    self.handle_post(url, body)
+                    self.handle_post(url, request, boundary)
                 if Head:
                     self.Head(url)
             else:
@@ -137,7 +145,7 @@ class ServerThread(threading.Thread):
 
             if close:
                 self.client_socket.close()
-                print("closed")
+                print("Connection Closed")
                 break
 
     def Head(self, url):
@@ -280,15 +288,16 @@ class ServerThread(threading.Thread):
             self.client_socket.sendall(b'0\r\n\r\n')
             return
 
-    def handle_post(self, url, body):
+    def handle_post(self, url, request, boundary):
         analyze = url.split("?")
-        print(analyze)
-        if len(analyze) != 2:
+        print("upload or delete path:", analyze)
+        if len(analyze) != 2:  # no parameter
             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
             return
         else:
             try:
                 func = analyze[0][-6:]
+                print("upload or delete:", func)
                 path = ""
                 if analyze[1].startswith("path="):
                     try:
@@ -297,10 +306,10 @@ class ServerThread(threading.Thread):
                             path = "./data" + path
                         else:
                             path = "./data/" + path
-                        print(path)
+                        print("Full path:", path)
                         authority = path.split("/")[2]
-                        print(authority)
-                        if authority != self.username:
+                        print("whose folder:", authority)
+                        if authority != self.username:  # have no authority
                             self.client_socket.sendall(
                                 ResponseFactory.http_403_forbidden())  # Not the current user's folder
                             return
@@ -311,29 +320,72 @@ class ServerThread(threading.Thread):
                 else:
                     self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
                 if func == "upload":
-                    self.upload(path, body)
+                    self.upload(path, request, boundary)
                 elif func == "delete":
                     self.delete(path)
                 else:
+                    # unsupported function
                     self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                     return
             except IndexError:
+                # format error or function unsupported
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
 
-    def upload(self, path, body):
+    def upload(self, path, request, boundary):
+        if boundary is None:
+            # format error
+            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+            return
+        bound = "--" + boundary
         if path[-1] != '/':
             path += "/"
-        print(path)
+        print("upload path:", path)
         if not os.path.isdir(path):
+            # can only upload to a folder
+            print("upload path not folder")
             self.client_socket.sendall(ResponseFactory.http_404_not_found())
             return
         else:
-            pass
+            lines = request.split("\r\n")
+            for line in lines:
+                if line.startswith("Content-Disposition:"):
+                    try:
+                        name = line.split("filename=")[1]
+                        file_name = name.strip()[1:-1]
+                        print("upload filename:", file_name)
+                    except IndexError:
+                        # cannot find filename
+                        print("no filename")
+                        self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    path += file_name
+                    break
+            if path[-1] == '/':
+                # cannot upload a folder
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                return
+            file_body = request.split(bound)
+            if len(file_body) != 3:
+                # format error
+                print("bound error", file_body, bound)
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                return
+            file_content = file_body[1].split("\r\n\r\n")
+            print("upload file content:", file_content)
+            try:
+                data = file_content[1].strip().encode()
+                with open(path, "wb") as file_writer:
+                    file_writer.write(data)
+                self.client_socket.sendall(ResponseFactory.http_200_ok())
+            except IndexError:
+                # no data
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                return
+
         # wait for the answer of the issue
-        response = ResponseFactory.http_200_ok() + b"\r\n"
-        self.client_socket.sendall(response)
-        return
+        # response = ResponseFactory.http_200_ok() + b"\r\n"
+        # self.client_socket.sendall(response)
+        # return
 
     def delete(self, path):
         if not os.path.exists(path):
