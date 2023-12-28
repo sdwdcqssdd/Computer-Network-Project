@@ -4,14 +4,18 @@ import threading
 import os
 import json
 import shutil
-from response_factory import ResponseFactory
 
 directory_path = "."
 subdirectories = [name for name in os.listdir(directory_path) if os.path.isdir(os.path.join(directory_path, name))]
 folder = "data"
 
+
 # the path of authentication information
 auth_path = "./userInfo.json"
+
+
+def ok():
+    return b"HTTP/1.1 200 OK\r\nSever: HTTPServer\r\n"
 
 
 # used to check user info
@@ -37,6 +41,18 @@ def authenticate(auth_info):
                     return False, None
     else:
         return False, None
+
+
+# used to generate non-Auth header
+def Auth_Response(flag):
+    if flag:
+        head = b"HTTP/1.1 200 OK\r\n"
+        head += b"\r\n"
+    else:
+        head = b"HTTP/1.1 401 Unauthorized\r\n"
+        head += b"WWW-Authenticated: Basic realm='Authorization Required'\r\n"
+        head += b"\r\n"
+    return head
 
 
 # main server thread, handle requests of a user
@@ -71,9 +87,16 @@ class ServerThread(threading.Thread):
             try:
                 body = request.split("\r\n\r\n")[1]
             except IndexError:
-                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                self.client_socket.sendall(HTTP_400Error())
                 return
 
+            if lines[0].startswith('GET'):
+                pass
+            elif lines[0].startswith('POST'):
+                pass
+            else:
+                self.client_socket.sendall(HTTP_400Error)
+            
             for line in lines:
                 if line.startswith("GET"):
                     print("GET method")
@@ -90,12 +113,12 @@ class ServerThread(threading.Thread):
                     print("Have Auth Info")
                     content = line.split(" ")
                     if len(content) != 3:
-                        # authentication should be False
+                        # return 401
                         continue
                     auth_type = content[1].strip()
                     auth_content = content[2].strip()
                     if auth_type != "Basic":
-                        # authentication should be False
+                        # return 401
                         continue
                     authentication, self.username = authenticate(auth_content)
                 elif line.startswith("POST"):
@@ -105,24 +128,26 @@ class ServerThread(threading.Thread):
                     url = contents[1]
                     print(url)
 
+            head = Auth_Response(authentication)
+
             if not authentication:
-                self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
+                print("To send response")
+                a = self.client_socket.sendall(head)
+                print(a)
                 print("Not Authenticated")
-                continue
-            if url is not None:
+            elif url is not None:
                 if get:
                     self.view(url)
                 if post:
                     self.handle_post(url, body)
             else:
-                self.client_socket.sendall(ResponseFactory.http_200_ok())
+                self.client_socket.sendall(head)
 
             if close:
                 self.client_socket.close()
                 print("closed")
                 break
 
-    def view(self, url):
         parts = url.split("?")
         parameter = None
         if len(parts) == 1:
@@ -132,6 +157,13 @@ class ServerThread(threading.Thread):
             addr = parts[0]
             addr = folder + addr
             parameter = parts[1]
+        if (parameter == "SUSTech-HTTP=0") or (parameter is None):
+            pass
+        elif parameter == "SUSTech-HTTP=1":
+            pass
+        else:
+            self.client_socket.sendall(HTTP_400Error)
+            return
         if os.path.exists(addr):
             if os.path.isfile(addr):
                 self.download(addr, parameter)
@@ -139,7 +171,7 @@ class ServerThread(threading.Thread):
             else:
                 if (parameter == "SUSTech-HTTP=0") or (parameter is None):
                     contents = os.listdir(addr)
-                    head = (ResponseFactory.http_200_ok()
+                    head = (ok()
                             + b"Content-type: text/html; charset=utf-8\r\n"
                             )
                     content = (
@@ -169,7 +201,7 @@ class ServerThread(threading.Thread):
                 elif parameter == "SUSTech-HTTP=1":
                     contents = os.listdir(addr)
                     content = json.dumps(contents)
-                    head = (ResponseFactory.http_200_ok()
+                    head = (ok()
                             + b"Content-type: application/json\r\n"
                             + b"Content-Length: " + str(len(content)).encode('utf-8') + b"\r\n\r\n"
                             )
@@ -178,30 +210,51 @@ class ServerThread(threading.Thread):
                     self.client_socket.sendall(response)
                     return
                 else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    self.client_socket.sendall(HTTP_400Error())
                     return
         else:
-            self.client_socket.sendall(ResponseFactory.http_404_not_found())
+            self.client_socket.sendall(HTTP_404Error())
             return
 
     def download(self, addr, parameter):
         mime_type, encoding = mimetypes.guess_type(addr)
-        head = (ResponseFactory.http_200_ok()
-                + b"Content-type: " + mime_type.encode('utf-8')
-                )
+        head = (ok() + b"Content-type: ")
+        if mime_type:
+            head += mime_type.encode('utf-8')
+        else:
+            head += b'application/octet-stream'    
         if encoding:
             head += b"; charset=" + encoding.encode('utf-8')
         head += b"\r\n"
         with open(addr, 'rb') as f:
             content = f.read()
 
-        if (parameter is None) or parameter.startswith("SUSTech-HTTP=") or parameter == 'chunked=0':
+        chuncked = False
+        para = parameter.split("&")
+        for p in para:
+            arg, val = p.split('=')
+            if arg == 'SUSTech-HTTP':
+                continue
+            elif arg == 'chunked':
+                if val == '0':
+                    chuncked = False
+                elif val == '1':
+                    chuncked = True
+                else:
+                    self.client_socket.sendall(HTTP_400Error)
+                    return
+            else:
+                self.client_socket.sendall(HTTP_400Error)
+                return            
+
+
+        if chuncked:
             length = len(content)
             head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
             response = head + content
             self.client_socket.sendall(response)
             return
-        elif parameter == 'chunked=1':
+        else:
             head += b'Transfer-Encoding: chunked\r\n\r\n'
             self.client_socket.sendall(head)
 
@@ -218,14 +271,10 @@ class ServerThread(threading.Thread):
             self.client_socket.sendall(b'0\r\n\r\n')
             return
 
-        else:
-            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-            return
-
     def handle_post(self, url, body):
         analyze = url.split("?")
         if len(analyze != 2):
-            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+            self.client_socket.sendall(HTTP_400Error())
             return
         else:
             try:
@@ -240,47 +289,46 @@ class ServerThread(threading.Thread):
                             path = "./data/" + path
                         authority = path.split("/")[2]
                         if authority != self.username:
-                            self.client_socket.sendall(
-                                ResponseFactory.http_403_forbidden())  # Not the current user's folder
+                            self.client_socket.sendall(HTTP_403Error())  # Not the current user's folder
                             return
                     except IndexError:
                         # path is null
-                        self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                        self.client_socket.sendall(HTTP_400Error())
                         return
                 else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
+                    self.client_socket.sendall(HTTP_400Error())  # Do not have parameter "path"
                 if func == "upload":
                     self.upload(path, body)
                 elif func == "delete":
                     self.delete(path)
                 else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    self.client_socket.sendall(HTTP_400Error())
                     return
             except IndexError:
-                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                self.client_socket.sendall(HTTP_400Error())
                 return
 
     def upload(self, path, body):
         if path[-1] != '/':
             path += "/"
         if not os.path.isdir(path):
-            self.client_socket.sendall(ResponseFactory.http_404_not_found())
+            self.client_socket.sendall(HTTP_404Error())
             return
         else:
             pass
         # wait for the answer of the issue
-        response = ResponseFactory.http_200_ok() + b"\r\n"
+        response = ok() + b"\r\n"
         self.client_socket.sendall(response)
         return
 
     def delete(self, path):
         if not os.path.exists(path):
-            self.client_socket.sendall(ResponseFactory.http_404_not_found())
+            self.client_socket.sendall(HTTP_404Error())
             return
         if os.path.isfile(path):
             os.remove(path)
         else:
             shutil.rmtree(path)
-        response = ResponseFactory.http_200_ok() + b"\r\n"
+        response = ok() + b"\r\n"
         self.client_socket.sendall(response)
         return
