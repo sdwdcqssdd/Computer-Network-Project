@@ -69,6 +69,7 @@ class ServerThread(threading.Thread):
             url = None
             get = False
             post = False
+            Head = False
             try:
                 body = request.split("\r\n\r\n")[1]
             except IndexError:
@@ -78,6 +79,8 @@ class ServerThread(threading.Thread):
             if lines[0].startswith('GET'):
                 pass
             elif lines[0].startswith('POST'):
+                pass
+            elif lines[0].startswith('HEAD'):
                 pass
             else:
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
@@ -112,6 +115,12 @@ class ServerThread(threading.Thread):
                     contents = line.split(" ")
                     url = contents[1]
                     print(url)
+                elif line.startswith("HEAD"):
+                    print("HEAD Method")
+                    Head = True
+                    contents = line.split(" ")
+                    url = contents[1]
+                    print(url)   
 
             if not authentication:
                 self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
@@ -121,6 +130,8 @@ class ServerThread(threading.Thread):
                     self.view(url)
                 if post:
                     self.handle_post(url, body)
+                if Head:
+                    self.Head(url)
             else:
                 self.client_socket.sendall(ResponseFactory.http_200_ok())
 
@@ -128,6 +139,22 @@ class ServerThread(threading.Thread):
                 self.client_socket.close()
                 print("closed")
                 break
+
+    def Head(self, url):
+        parts = url.split("?")
+        if len(parts) != 1:
+            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+            return
+        else:
+            addr = parts[0]
+            addr = "./" + folder + addr    
+            if os.path.exists(addr):
+                self.client_socket.sendall(ResponseFactory.http_200_ok())
+                return 
+            else:
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                return
+
 
     def view(self, url):
         parts = url.split("?")
