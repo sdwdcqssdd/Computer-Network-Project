@@ -61,87 +61,91 @@ class ServerThread(threading.Thread):
         while True:
             try:
                 request = self.client_socket.recv(1024).decode()
+                print("get a request")
+                print("request content:", repr(request))
+                lines = request.split("\r\n")
+                authentication = False  # need to check every request
+                close = False
+                url = None
+                get = False
+                post = False
+                Head = False
+                boundary = None
+                # try:
+                #     body = request.split("\r\n\r\n")[1]
+                # except IndexError:
+                #     self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                #     return
+
+                if lines[0].startswith('GET'):
+                    pass
+                elif lines[0].startswith('POST'):
+                    pass
+                elif lines[0].startswith('HEAD'):
+                    pass
+                else:
+                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+
+                for line in lines:
+                    if line.startswith("GET"):
+                        print("GET method")
+                        get = True
+                        contents = line.split(" ")
+                        url = contents[1]
+                        print(url)
+                    elif line.startswith("Connection:"):
+                        print("Check close request")
+                        content = line.split(":", 1)[1].strip()
+                        if content.lower() == "close":
+                            close = True
+                    elif line.startswith("Authorization:"):
+                        print("Have Auth Info")
+                        content = line.split(" ")
+                        if len(content) != 3:
+                            # format error, authentication should be False
+                            continue
+                        auth_type = content[1].strip()
+                        auth_content = content[2].strip()
+                        if auth_type != "Basic":
+                            # only accept Basic, authentication should be False
+                            continue
+                        authentication, self.username = authenticate(auth_content)
+                    elif line.startswith("POST"):
+                        print("POST Method")
+                        post = True
+                        contents = line.split(" ")
+                        url = contents[1]
+                        print(url)
+                    elif line.startswith("HEAD"):
+                        print("HEAD Method")
+                        Head = True
+                        contents = line.split(" ")
+                        url = contents[1]
+                        print(url)
+                    elif line.startswith("Content-Type:"):
+                        bound = line.split("boundary=")
+                        if len(bound) == 2:
+                            boundary = bound[1]
+
+                if not authentication:
+                    self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
+                    print("Authentication Failed")  # go to verify if the client want to close connection after this request
+                elif url is not None:
+                    if get:
+                        self.view(url)
+                    if post:
+                        self.handle_post(url, request, boundary)
+                    if Head:
+                        self.Head(url)
+                else:
+                    response = ResponseFactory.http_200_ok()
+                    response += b"Content-Type: application/octet-stream\r\n"
+                    response += b"Content-Length: 0\r\n"
+                    response += b"\r\n"
+                    self.client_socket.sendall(response)
             except ConnectionAbortedError:  # in case the user close the connection suddenly without informing
                 self.client_socket.close()
                 break
-            print("get a request")
-            print("request content:", repr(request))
-            lines = request.split("\r\n")
-            authentication = (self.username is None)  # username will be recorded after authentication
-            close = False
-            url = None
-            get = False
-            post = False
-            Head = False
-            boundary = None
-            # try:
-            #     body = request.split("\r\n\r\n")[1]
-            # except IndexError:
-            #     self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-            #     return
-
-            if lines[0].startswith('GET'):
-                pass
-            elif lines[0].startswith('POST'):
-                pass
-            elif lines[0].startswith('HEAD'):
-                pass
-            else:
-                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-            
-            for line in lines:
-                if line.startswith("GET"):
-                    print("GET method")
-                    get = True
-                    contents = line.split(" ")
-                    url = contents[1]
-                    print(url)
-                elif line.startswith("Connection:"):
-                    print("Check close request")
-                    content = line.split(":", 1)[1].strip()
-                    if content.lower() == "close":
-                        close = True
-                elif line.startswith("Authorization:"):
-                    print("Have Auth Info")
-                    content = line.split(" ")
-                    if len(content) != 3:
-                        # format error, authentication should be False
-                        continue
-                    auth_type = content[1].strip()
-                    auth_content = content[2].strip()
-                    if auth_type != "Basic":
-                        # only accept Basic, authentication should be False
-                        continue
-                    authentication, self.username = authenticate(auth_content)
-                elif line.startswith("POST"):
-                    print("POST Method")
-                    post = True
-                    contents = line.split(" ")
-                    url = contents[1]
-                    print(url)
-                elif line.startswith("HEAD"):
-                    print("HEAD Method")
-                    Head = True
-                    contents = line.split(" ")
-                    url = contents[1]
-                    print(url)
-                elif line.startswith("Content-Type:"):
-                    bound = line.split("boundary=")
-                    if len(bound) == 2:
-                        boundary = bound[1]
-
-            if not authentication:
-                self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
-                print("Authentication Failed")  # go to verify if the client want to close connection after this request
-            elif url is not None:
-                if get:
-                    self.view(url)
-                if post:
-                    self.handle_post(url, request, boundary)
-                if Head:
-                    self.Head(url)
-            else:
-                self.client_socket.sendall(ResponseFactory.http_200_ok())
 
             if close:
                 self.client_socket.close()
@@ -151,15 +155,22 @@ class ServerThread(threading.Thread):
     def Head(self, url):
         parts = url.split("?")
         if len(parts) != 1:
+            print("HEAD: param invalid")
             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
             return
         else:
             addr = parts[0]
             addr = "./" + folder + addr    
             if os.path.exists(addr):
-                self.client_socket.sendall(ResponseFactory.http_200_ok())
+                print("HEAD: URL valid")
+                response = ResponseFactory.http_200_ok()
+                response += b"Content-Type: application/octet-stream\r\n"
+                response += b"Content-Length: 0\r\n"
+                response += b"\r\n"
+                self.client_socket.sendall(response)
                 return 
             else:
+                print("HEAD: URL invalid")
                 self.client_socket.sendall(ResponseFactory.http_404_not_found())
                 return
 
@@ -376,7 +387,12 @@ class ServerThread(threading.Thread):
                 data = file_content[1].strip().encode()
                 with open(path, "wb") as file_writer:
                     file_writer.write(data)
-                self.client_socket.sendall(ResponseFactory.http_200_ok() + b"\r\n")
+                response = ResponseFactory.http_200_ok()
+                response += b"Content-Type: application/octet-stream\r\n"
+                response += b"Content-Length: 0\r\n"
+                response += b"\r\n"
+                print("upload response:", repr(response))
+                self.client_socket.sendall(response)
                 print("upload success")
             except IndexError:
                 # no data
@@ -396,7 +412,11 @@ class ServerThread(threading.Thread):
             os.remove(path)
         else:
             shutil.rmtree(path)
-        response = ResponseFactory.http_200_ok() + b"\r\n"
+        response = ResponseFactory.http_200_ok()
+        response += b"Content-Type: application/octet-stream\r\n"
+        response += b"Content-Length: 0\r\n"
+        response += b"\r\n"
+        print("delete response:", repr(response))
         self.client_socket.sendall(response)
         print("delete success")
         return
