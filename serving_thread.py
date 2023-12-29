@@ -376,7 +376,8 @@ class ServerThread(threading.Thread):
                 data = file_content[1].strip().encode()
                 with open(path, "wb") as file_writer:
                     file_writer.write(data)
-                self.client_socket.sendall(ResponseFactory.http_200_ok())
+                self.client_socket.sendall(ResponseFactory.http_200_ok() + b"\r\n")
+                print("upload success")
             except IndexError:
                 # no data
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
@@ -397,4 +398,5 @@ class ServerThread(threading.Thread):
             shutil.rmtree(path)
         response = ResponseFactory.http_200_ok() + b"\r\n"
         self.client_socket.sendall(response)
+        print("delete success")
         return
