@@ -3,7 +3,9 @@ import mimetypes
 import threading
 import os
 import json
+import uuid
 import shutil
+import time
 from response_factory import ResponseFactory
 
 directory_path = "."
@@ -12,12 +14,12 @@ folder = "data"
 
 # the path of authentication information
 auth_path = "./userInfo.json"
+session_path = "./sessionInfo.json"
 
 
 # used to check user info
-def authenticate(auth_info):
-    info = base64.b64decode(auth_info).decode()
-    info = info.split(":")
+def authenticate_by_auth(auth_info):
+    info = base64.b64decode(auth_info).decode().split(":")
     if len(info) != 2:  # format error
         return False, None
     username = info[0].strip()
@@ -42,13 +44,44 @@ def authenticate(auth_info):
         return False, None
 
 
+def set_cookie():
+    if os.path.exists(session_path):
+        lock = ServerThread.file_locks[session_path]
+        with lock:
+            with open(session_path, 'r+') as session_file:
+                try:
+                    data = json.load(session_file)
+                    session_id = str(uuid.uuid1().hex)
+                    data[session_id] = time.time()
+                    session_file.seek(0)
+                    session_file.write(json.dumps(data))
+                    return session_id
+                except (json.decoder.JSONDecodeError, KeyError):
+                    return None
+
+
+def authenticate_by_cookie(cookie_info):
+    if os.path.exists(session_path):
+        lock = ServerThread.file_locks[session_path]
+        with lock:
+            with open(session_path, 'r') as session_file:
+                try:
+                    data = json.load(session_file)
+                    if cookie_info in data and data[cookie_info] >= time.time():
+                        return True
+                    return False
+                except (json.decoder.JSONDecodeError, KeyError):
+                    return False
+
+
 # main server thread, handle requests of a user
 class ServerThread(threading.Thread):
     # every file needs a lock, in case of read-write conflict
     # key: root_path; value: file_lock
     # need to add lock when upload a new file, and remove lock when delete a file
     auth_lock = threading.Lock()
-    file_locks = {auth_path: auth_lock}
+    session_lock = threading.Lock()
+    file_locks = {auth_path: auth_lock, session_path: session_lock}
 
     def __init__(self, client_socket, client_addr):
         threading.Thread.__init__(self)
@@ -64,7 +97,11 @@ class ServerThread(threading.Thread):
                 print("get a request")
                 print("request content:", repr(request))
                 lines = request.split("\r\n")
-                authentication = False  # need to check every request
+                cookie_verification = False
+
+                authentication_auth = False  # need to check every request
+                authentication_cookie = False
+                session_id = None
                 close = False
                 url = None
                 get = False
@@ -109,7 +146,11 @@ class ServerThread(threading.Thread):
                         if auth_type != "Basic":
                             # only accept Basic, authentication should be False
                             continue
-                        authentication, self.username = authenticate(auth_content)
+                        authentication_auth, self.username = authenticate_by_auth(auth_content)
+                    elif line.startswith("Cookie:"):
+                        print("Have Cookie Info")
+                        session_id = line.split(" ")[1]
+                        authentication_cookie = authenticate_by_cookie(session_id)
                     elif line.startswith("POST"):
                         print("POST Method")
                         post = True
@@ -126,13 +167,20 @@ class ServerThread(threading.Thread):
                         bound = line.split("boundary=")
                         if len(bound) == 2:
                             boundary = bound[1]
+                if not authentication_cookie:
+                    if not authentication_auth:
+                        self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
+                        print("Authentication Failed")
+                        continue
+                    else:
+                        # first time session/cookie
+                        session_id = set_cookie()
+                        print(f"first time session/cookie, session_id is {session_id}")
+                    # go to verify if the client want to close connection after this request
 
-                if not authentication:
-                    self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
-                    print("Authentication Failed")  # go to verify if the client want to close connection after this request
-                elif url is not None:
+                if url is not None:
                     if get:
-                        self.view(url)
+                        self.view(url, session_id)
                     if post:
                         self.handle_post(url, request, boundary)
                     if Head:
@@ -141,12 +189,13 @@ class ServerThread(threading.Thread):
                     response = ResponseFactory.http_200_ok()
                     response += b"Content-Type: application/octet-stream\r\n"
                     response += b"Content-Length: 0\r\n"
+                    if session_id:
+                        response += f'Set-Cookie: {session_id}\r\n'.encode()
                     response += b"\r\n"
                     self.client_socket.sendall(response)
             except ConnectionAbortedError:  # in case the user close the connection suddenly without informing
                 self.client_socket.close()
                 break
-
             if close:
                 self.client_socket.close()
                 print("Connection Closed")
@@ -160,7 +209,7 @@ class ServerThread(threading.Thread):
             return
         else:
             addr = parts[0]
-            addr = "./" + folder + addr    
+            addr = "./" + folder + addr
             if os.path.exists(addr):
                 print("HEAD: URL valid")
                 response = ResponseFactory.http_200_ok()
@@ -168,14 +217,13 @@ class ServerThread(threading.Thread):
                 response += b"Content-Length: 0\r\n"
                 response += b"\r\n"
                 self.client_socket.sendall(response)
-                return 
+                return
             else:
                 print("HEAD: URL invalid")
                 self.client_socket.sendall(ResponseFactory.http_404_not_found())
                 return
 
-
-    def view(self, url):
+    def view(self, url, session_id):
         parts = url.split("?")
         parameter = None
         if len(parts) == 1:
@@ -202,6 +250,8 @@ class ServerThread(threading.Thread):
                     head = (ResponseFactory.http_200_ok()
                             + b"Content-type: text/html; charset=utf-8\r\n"
                             )
+                    if session_id:
+                        head += f'Set-Cookie: {session_id}\r\n'.encode()
                     content = (
                             b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
                             + b'<html>\n'
@@ -250,7 +300,7 @@ class ServerThread(threading.Thread):
         if mime_type:
             head += mime_type.encode('utf-8')
         else:
-            head += b'application/octet-stream'    
+            head += b'application/octet-stream'
         if encoding:
             head += b"; charset=" + encoding.encode('utf-8')
         head += b"\r\n"
@@ -273,8 +323,7 @@ class ServerThread(threading.Thread):
                     return
             else:
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                return            
-
+                return
 
         if chuncked:
             length = len(content)
