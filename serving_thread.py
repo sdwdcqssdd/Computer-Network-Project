@@ -76,6 +76,22 @@ def authenticate_by_cookie(cookie_info):
                 except (json.decoder.JSONDecodeError, KeyError):
                     return False
 
+def judgePara(parameters):
+    para = parameters.split("&")
+    for p in para:
+        arg, val = p.split('=')
+        if arg == 'SUSTech-HTTP':
+            continue
+        elif arg == 'chunked':
+            if val == '0':
+                pass
+            elif val == '1':
+                pass
+            else:
+                return False
+        else:
+            return False    
+    return True        
 
 # main server thread, handle requests of a user
 class ServerThread(threading.Thread):
@@ -161,7 +177,7 @@ class ServerThread(threading.Thread):
                         print(url)
                     elif line.startswith("HEAD"):
                         print("HEAD Method")
-                        mothod = "head"
+                        method = "head"
                         contents = line.split(" ")
                         url = contents[1]
                         print(url)
@@ -204,58 +220,85 @@ class ServerThread(threading.Thread):
         print("upload or delete path:", query)
         param_num = len(query) - 1
         if param_num == 0:  # no parameter
-            pass
+            if method == 'head':
+                self.Head(url)
+            elif method == 'get':
+                self.view(url,session_id)
+            else:
+                self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())    
         elif param_num == 1:
-            try:
-                func = query[0][-6:]  # function name, just before '?'
-                print("URL function:", func)
-                path = ""
-                if query[1].startswith("path="):
-                    try:
-                        path = query[1][5:]  # parse the directory
-                        if path[0] == '/':
-                            path = "./data" + path
-                        else:
-                            path = "./data/" + path
-                        print("Full path:", path)
-                        authority = path.split("/")[2]
-                        print("whose folder:", authority)
-                    except IndexError:
-                        # path is null
-                        self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                        return
-                    if func == "upload":
-                        if method != "post":
-                            self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+            if query[1] == "SUSTech-HTTP=0":
+                if method == 'head':
+                    self.Head(url)
+                elif method == 'get':
+                    self.view(url,session_id)
+                else:
+                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+            elif query[1] == "SUSTech-HTTP=1":
+                if method == 'head':
+                    self.Head(url)
+                elif method == 'get':
+                    self.view(url,session_id)
+                else:
+                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+            elif judgePara(query[1]):
+                if method == 'head':
+                    self.Head(url)
+                elif method == 'get':
+                    self.view(url,session_id)
+                else:
+                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+            else:         
+                try:
+                    func = query[0][-6:]  # function name, just before '?'
+                    print("URL function:", func)
+                    path = ""
+                    if query[1].startswith("path="):
+                        try:
+                            path = query[1][5:]  # parse the directory
+                            if path[0] == '/':
+                                path = "./data" + path
+                            else:
+                                path = "./data/" + path
+                            print("Full path:", path)
+                            authority = path.split("/")[2]
+                            print("whose folder:", authority)
+                        except IndexError:
+                            # path is null
+                            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                             return
-                        else:
-                            if authority != self.username:  # have no authority
-                                self.client_socket.sendall(ResponseFactory.http_403_forbidden())  # Not the current user's folder
+                        if func == "upload":
+                            if method != "post":
+                                self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
                                 return
-                            self.upload(path, request, boundary, session_id)
-                            return
-                    elif func == "delete":
-                        if method != "post":
-                            self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
-                            return
-                        else:
-                            if authority != self.username:  # have no authority
-                                self.client_socket.sendall(ResponseFactory.http_403_forbidden())  # Not the current user's folder
+                            else:
+                                if authority != self.username:  # have no authority
+                                    self.client_socket.sendall(ResponseFactory.http_403_forbidden())  # Not the current user's folder
+                                    return
+                                self.upload(path, request, boundary, session_id)
                                 return
-                            self.delete(path, session_id)
+                        elif func == "delete":
+                            if method != "post":
+                                self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                                return
+                            else:
+                                if authority != self.username:  # have no authority
+                                    self.client_socket.sendall(ResponseFactory.http_403_forbidden())  # Not the current user's folder
+                                    return
+                                self.delete(path, session_id)
+                                return
+                        else:
+                            # unsupported function, URL cannot be resolved
+                            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                             return
                     else:
-                        # unsupported function, URL cannot be resolved
-                        self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                        return
-                else:
-                    # self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
-                    # check other parameters
-                    pass
-            except IndexError:
-                # format error or function unsupported
-                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                return
+                        # self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
+                        # check other parameters
+                        pass
+                except IndexError:
+                    # format error or function unsupported
+                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    return
         else:
             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
             return
@@ -264,25 +307,41 @@ class ServerThread(threading.Thread):
 
     def Head(self, url):
         parts = url.split("?")
-        if len(parts) != 1:
-            print("HEAD: param invalid")
-            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-            return
+        parameter = None
+        if len(parts) == 1:
+            addr = parts[0]
+            addr = "./" + folder + addr
         else:
             addr = parts[0]
             addr = "./" + folder + addr
-            if os.path.exists(addr):
-                print("HEAD: URL valid")
-                response = ResponseFactory.http_200_ok()
-                response += b"Content-Type: application/octet-stream\r\n"
-                response += b"Content-Length: 0\r\n"
-                response += b"\r\n"
-                self.client_socket.sendall(response)
-                return
+            parameter = parts[1]
+        
+        if os.path.exists(addr):
+            if os.path.isfile(addr):
+                if parameter is None:
+                    pass
+                elif judgePara(parameter):
+                    pass
+                else:
+                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    return
             else:
-                print("HEAD: URL invalid")
-                self.client_socket.sendall(ResponseFactory.http_404_not_found())
-                return
+                if parameter is None or parameter == 'SUSTech-HTTP=0' or parameter == 'SUSTech-HTTP=1':
+                    pass
+                else:
+                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    return 
+            print("HEAD: URL valid")
+            response = ResponseFactory.http_200_ok()
+            response += b"Content-Type: application/octet-stream\r\n"
+            response += b"Content-Length: 0\r\n"
+            response += b"\r\n"
+            self.client_socket.sendall(response)
+            return
+        else:
+            print("HEAD: URL invalid")
+            self.client_socket.sendall(ResponseFactory.http_404_not_found())
+            return
 
     def view(self, url, session_id):
         parts = url.split("?")
@@ -292,15 +351,8 @@ class ServerThread(threading.Thread):
             addr = "./" + folder + addr
         else:
             addr = parts[0]
-            addr = folder + addr
+            addr = "./" + folder + addr
             parameter = parts[1]
-        if (parameter == "SUSTech-HTTP=0") or (parameter is None):
-            pass
-        elif parameter == "SUSTech-HTTP=1":
-            pass
-        else:
-            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-            return
         if os.path.exists(addr):
             if os.path.isfile(addr):
                 self.download(addr, parameter)
