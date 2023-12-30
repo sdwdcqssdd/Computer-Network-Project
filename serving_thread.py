@@ -181,7 +181,7 @@ class ServerThread(threading.Thread):
                     # go to verify if the client want to close connection after this request
 
                 if url is not None:
-                    self.URL_handler(method, url)
+                    self.URL_handler(method, url, boundary, session_id, request)
 
                 else:
                     response = ResponseFactory.http_200_ok()
@@ -199,20 +199,20 @@ class ServerThread(threading.Thread):
                 print("Connection Closed")
                 break
 
-    def URL_handler(self, method, url, request, boundary):
-        analyze = url.split("?")
-        print("upload or delete path:", analyze)
-        if len(analyze) != 2:  # no parameter
-            self.client_socket.sendall(ResponseFactory.http_400_method_not_allowed())
-            return
-        else:
+    def URL_handler(self, method, url, boundary, session_id, request):
+        query = url.split("?")
+        print("upload or delete path:", query)
+        param_num = len(query) - 1
+        if param_num == 0:  # no parameter
+            pass
+        elif param_num == 1:
             try:
-                func = analyze[0][-6:]
-                print("upload or delete:", func)
+                func = query[0][-6:]  # function name, just before '?'
+                print("URL function:", func)
                 path = ""
-                if analyze[1].startswith("path="):
+                if query[1].startswith("path="):
                     try:
-                        path = analyze[1][5:]
+                        path = query[1][5:]  # parse the directory
                         if path[0] == '/':
                             path = "./data" + path
                         else:
@@ -220,28 +220,45 @@ class ServerThread(threading.Thread):
                         print("Full path:", path)
                         authority = path.split("/")[2]
                         print("whose folder:", authority)
-                        if authority != self.username:  # have no authority
-                            self.client_socket.sendall(
-                                ResponseFactory.http_403_forbidden())  # Not the current user's folder
-                            return
                     except IndexError:
                         # path is null
                         self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                         return
+                    if func == "upload":
+                        if method != "post":
+                            self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                            return
+                        else:
+                            if authority != self.username:  # have no authority
+                                self.client_socket.sendall(ResponseFactory.http_403_forbidden())  # Not the current user's folder
+                                return
+                            self.upload(path, request, boundary, session_id)
+                            return
+                    elif func == "delete":
+                        if method != "post":
+                            self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                            return
+                        else:
+                            if authority != self.username:  # have no authority
+                                self.client_socket.sendall(ResponseFactory.http_403_forbidden())  # Not the current user's folder
+                                return
+                            self.delete(path, session_id)
+                            return
+                    else:
+                        # unsupported function, URL cannot be resolved
+                        self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                        return
                 else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
-                if func == "upload":
-                    self.upload(path, request, boundary)
-                elif func == "delete":
-                    self.delete(path)
-                else:
-                    # unsupported function
-                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
-                    return
+                    # self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
+                    # check other parameters
+                    pass
             except IndexError:
                 # format error or function unsupported
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
+        else:
+            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+            return
 
 
 
@@ -438,7 +455,7 @@ class ServerThread(threading.Thread):
     #             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
     #             return
 
-    def upload(self, path, request, boundary):
+    def upload(self, path, request, boundary, session_id):
         if boundary is None:
             # format error
             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
@@ -485,6 +502,8 @@ class ServerThread(threading.Thread):
                 response = ResponseFactory.http_200_ok()
                 response += b"Content-Type: application/octet-stream\r\n"
                 response += b"Content-Length: 0\r\n"
+                if session_id:
+                    response += f'Set-Cookie: {session_id}\r\n'.encode()
                 response += b"\r\n"
                 print("upload response:", repr(response))
                 self.client_socket.sendall(response)
@@ -499,7 +518,7 @@ class ServerThread(threading.Thread):
         # self.client_socket.sendall(response)
         # return
 
-    def delete(self, path):
+    def delete(self, path, session_id):
         if not os.path.exists(path):
             self.client_socket.sendall(ResponseFactory.http_404_not_found())
             return
@@ -510,6 +529,8 @@ class ServerThread(threading.Thread):
         response = ResponseFactory.http_200_ok()
         response += b"Content-Type: application/octet-stream\r\n"
         response += b"Content-Length: 0\r\n"
+        if session_id:
+            response += f'Set-Cookie: {session_id}\r\n'.encode()
         response += b"\r\n"
         print("delete response:", repr(response))
         self.client_socket.sendall(response)
