@@ -1,6 +1,5 @@
-# test some function
-a = "/a/b/c/"
-b = a.split("/")
-print(len(b))
-print(b[0])
-print(b[-1])
+import time
+
+time_now = time.time()
+time_later = time_now + 120
+# print(time_now + " " + time_later)

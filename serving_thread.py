@@ -44,7 +44,7 @@ def authenticate_by_auth(auth_info):
         return False, None
 
 
-def set_cookie():
+def set_cookie(username):
     if os.path.exists(session_path):
         lock = ServerThread.file_locks[session_path]
         with lock:
@@ -52,7 +52,10 @@ def set_cookie():
                 try:
                     data = json.load(session_file)
                     session_id = str(uuid.uuid1().hex)
-                    data[session_id] = time.time()
+                    data[session_id] = {
+                        "username": username,
+                        "time_expire": time.time() + 60
+                    }
                     session_file.seek(0)
                     session_file.write(json.dumps(data))
                     return session_id
@@ -67,7 +70,7 @@ def authenticate_by_cookie(cookie_info):
             with open(session_path, 'r') as session_file:
                 try:
                     data = json.load(session_file)
-                    if cookie_info in data and data[cookie_info] >= time.time():
+                    if cookie_info in data and data[cookie_info]["time_expire"] >= time.time():
                         return True
                     return False
                 except (json.decoder.JSONDecodeError, KeyError):
@@ -174,7 +177,7 @@ class ServerThread(threading.Thread):
                         continue
                     else:
                         # first time session/cookie
-                        session_id = set_cookie()
+                        session_id = set_cookie(self.username)
                         print(f"first time session/cookie, session_id is {session_id}")
                     # go to verify if the client want to close connection after this request
 
