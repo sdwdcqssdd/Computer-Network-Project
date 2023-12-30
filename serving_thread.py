@@ -112,15 +112,15 @@ class ServerThread(threading.Thread):
                 #     self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 #     return
 
-                if lines[0].startswith('GET'):
-                    pass
-                elif lines[0].startswith('POST'):
-                    pass
-                elif lines[0].startswith('HEAD'):
-                    pass
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
-                    continue
+                # if lines[0].startswith('GET'):
+                #     pass
+                # elif lines[0].startswith('POST'):
+                #     pass
+                # elif lines[0].startswith('HEAD'):
+                #     pass
+                # else:
+                #     self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                #     continue
 
                 for line in lines:
                     if line.startswith("GET"):
