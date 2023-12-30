@@ -121,7 +121,7 @@ class ServerThread(threading.Thread):
                 elif lines[0].startswith('HEAD'):
                     pass
                 else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
 
                 for line in lines:
                     if line.startswith("GET"):
