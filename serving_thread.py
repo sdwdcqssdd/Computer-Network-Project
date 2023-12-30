@@ -104,9 +104,7 @@ class ServerThread(threading.Thread):
                 session_id = None
                 close = False
                 url = None
-                get = False
-                post = False
-                Head = False
+                method = None
                 boundary = None
                 # try:
                 #     body = request.split("\r\n\r\n")[1]
@@ -121,12 +119,13 @@ class ServerThread(threading.Thread):
                 elif lines[0].startswith('HEAD'):
                     pass
                 else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                    continue
 
                 for line in lines:
                     if line.startswith("GET"):
                         print("GET method")
-                        get = True
+                        method = "get"
                         contents = line.split(" ")
                         url = contents[1]
                         print(url)
@@ -153,13 +152,13 @@ class ServerThread(threading.Thread):
                         authentication_cookie = authenticate_by_cookie(session_id)
                     elif line.startswith("POST"):
                         print("POST Method")
-                        post = True
+                        method = "post"
                         contents = line.split(" ")
                         url = contents[1]
                         print(url)
                     elif line.startswith("HEAD"):
                         print("HEAD Method")
-                        Head = True
+                        mothod = "head"
                         contents = line.split(" ")
                         url = contents[1]
                         print(url)
@@ -179,12 +178,8 @@ class ServerThread(threading.Thread):
                     # go to verify if the client want to close connection after this request
 
                 if url is not None:
-                    if get:
-                        self.view(url, session_id)
-                    if post:
-                        self.handle_post(url, request, boundary)
-                    if Head:
-                        self.Head(url)
+                    self.URL_handler(method, url)
+
                 else:
                     response = ResponseFactory.http_200_ok()
                     response += b"Content-Type: application/octet-stream\r\n"
@@ -200,6 +195,52 @@ class ServerThread(threading.Thread):
                 self.client_socket.close()
                 print("Connection Closed")
                 break
+
+    def URL_handler(self, method, url, request, boundary):
+        analyze = url.split("?")
+        print("upload or delete path:", analyze)
+        if len(analyze) != 2:  # no parameter
+            self.client_socket.sendall(ResponseFactory.http_400_method_not_allowed())
+            return
+        else:
+            try:
+                func = analyze[0][-6:]
+                print("upload or delete:", func)
+                path = ""
+                if analyze[1].startswith("path="):
+                    try:
+                        path = analyze[1][5:]
+                        if path[0] == '/':
+                            path = "./data" + path
+                        else:
+                            path = "./data/" + path
+                        print("Full path:", path)
+                        authority = path.split("/")[2]
+                        print("whose folder:", authority)
+                        if authority != self.username:  # have no authority
+                            self.client_socket.sendall(
+                                ResponseFactory.http_403_forbidden())  # Not the current user's folder
+                            return
+                    except IndexError:
+                        # path is null
+                        self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                        return
+                else:
+                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
+                if func == "upload":
+                    self.upload(path, request, boundary)
+                elif func == "delete":
+                    self.delete(path)
+                else:
+                    # unsupported function
+                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                    return
+            except IndexError:
+                # format error or function unsupported
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                return
+
+
 
     def Head(self, url):
         parts = url.split("?")
@@ -348,49 +389,51 @@ class ServerThread(threading.Thread):
             self.client_socket.sendall(b'0\r\n\r\n')
             return
 
-    def handle_post(self, url, request, boundary):
-        analyze = url.split("?")
-        print("upload or delete path:", analyze)
-        if len(analyze) != 2:  # no parameter
-            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-            return
-        else:
-            try:
-                func = analyze[0][-6:]
-                print("upload or delete:", func)
-                path = ""
-                if analyze[1].startswith("path="):
-                    try:
-                        path = analyze[1][5:]
-                        if path[0] == '/':
-                            path = "./data" + path
-                        else:
-                            path = "./data/" + path
-                        print("Full path:", path)
-                        authority = path.split("/")[2]
-                        print("whose folder:", authority)
-                        if authority != self.username:  # have no authority
-                            self.client_socket.sendall(
-                                ResponseFactory.http_403_forbidden())  # Not the current user's folder
-                            return
-                    except IndexError:
-                        # path is null
-                        self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                        return
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
-                if func == "upload":
-                    self.upload(path, request, boundary)
-                elif func == "delete":
-                    self.delete(path)
-                else:
-                    # unsupported function
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                    return
-            except IndexError:
-                # format error or function unsupported
-                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                return
+    # def handle_post(self, url, request, boundary):
+    #     upload = False
+    #     delete = False
+    #     analyze = url.split("?")
+    #     print("upload or delete path:", analyze)
+    #     if len(analyze) != 2:  # no parameter
+    #         self.client_socket.sendall(ResponseFactory.http_400_method_not_allowed())
+    #         return
+    #     else:
+    #         try:
+    #             func = analyze[0][-6:]
+    #             print("upload or delete:", func)
+    #             path = ""
+    #             if analyze[1].startswith("path="):
+    #                 try:
+    #                     path = analyze[1][5:]
+    #                     if path[0] == '/':
+    #                         path = "./data" + path
+    #                     else:
+    #                         path = "./data/" + path
+    #                     print("Full path:", path)
+    #                     authority = path.split("/")[2]
+    #                     print("whose folder:", authority)
+    #                     if authority != self.username:  # have no authority
+    #                         self.client_socket.sendall(
+    #                             ResponseFactory.http_403_forbidden())  # Not the current user's folder
+    #                         return
+    #                 except IndexError:
+    #                     # path is null
+    #                     self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+    #                     return
+    #             else:
+    #                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
+    #             if func == "upload":
+    #                 self.upload(path, request, boundary)
+    #             elif func == "delete":
+    #                 self.delete(path)
+    #             else:
+    #                 # unsupported function
+    #                 self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+    #                 return
+    #         except IndexError:
+    #             # format error or function unsupported
+    #             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+    #             return
 
     def upload(self, path, request, boundary):
         if boundary is None:
