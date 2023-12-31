@@ -124,7 +124,7 @@ class ServerThread(threading.Thread):
         while True:
             try:
                 request = self.client_socket.recv(1024).decode()
-                print("get a request")
+                print("get a request of thread", self.name)
                 print("request content:", repr(request))
                 lines = request.split("\r\n")
                 cookie_verification = False
@@ -297,7 +297,7 @@ class ServerThread(threading.Thread):
             self.client_socket.sendall(ResponseFactory.http_403_forbidden())
             return
 
-        if os.path.exists(query[0]):
+        if os.path.exists("./data" + query[0]):  # should be path relative to root dir?
             pass
         else:
             self.client_socket.sendall(ResponseFactory.http_404_not_found())
