@@ -81,7 +81,12 @@ def judgePara(parameters):
     for p in para:
         arg, val = p.split('=')
         if arg == 'SUSTech-HTTP':
-            continue
+            if val == '0':
+                pass
+            elif val == '1':
+                pass
+            else:
+                return False
         elif arg == 'chunked':
             if val == '0':
                 pass
@@ -219,35 +224,19 @@ class ServerThread(threading.Thread):
         query = url.split("?")
         print("upload or delete path:", query)
         param_num = len(query) - 1
+        Match = False
+        forbidden = False
         if param_num == 0:  # no parameter
             if method == 'head':
-                self.Head(url)
+                Match = True
             elif method == 'get':
-                self.view(url,session_id)
-            else:
-                self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())    
+                Match = True    
         elif param_num == 1:
-            if query[1] == "SUSTech-HTTP=0":
+            if judgePara(query[1]):
                 if method == 'head':
-                    self.Head(url)
+                    Match = True
                 elif method == 'get':
-                    self.view(url,session_id)
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
-            elif query[1] == "SUSTech-HTTP=1":
-                if method == 'head':
-                    self.Head(url)
-                elif method == 'get':
-                    self.view(url,session_id)
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
-            elif judgePara(query[1]):
-                if method == 'head':
-                    self.Head(url)
-                elif method == 'get':
-                    self.view(url,session_id)
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                    Match = True 
             else:         
                 try:
                     func = query[0][-6:]  # function name, just before '?'
@@ -269,32 +258,27 @@ class ServerThread(threading.Thread):
                             return
                         if func == "upload":
                             if method != "post":
-                                self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
-                                return
+                                Match = False
                             else:
+                                Match = True
                                 if authority != self.username:  # have no authority
-                                    self.client_socket.sendall(ResponseFactory.http_403_forbidden())  # Not the current user's folder
-                                    return
-                                self.upload(path, request, boundary, session_id)
-                                return
+                                    forbidden = True
+                                
                         elif func == "delete":
                             if method != "post":
-                                self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
-                                return
+                                Match = False
                             else:
+                                Match = True
                                 if authority != self.username:  # have no authority
-                                    self.client_socket.sendall(ResponseFactory.http_403_forbidden())  # Not the current user's folder
-                                    return
-                                self.delete(path, session_id)
-                                return
+                                    forbidden = True
+                              
                         else:
                             # unsupported function, URL cannot be resolved
                             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                             return
                     else:
-                        # self.client_socket.sendall(ResponseFactory.http_400_bad_request())  # Do not have parameter "path"
-                        # check other parameters
-                        pass
+                        self.client_socket.sendall(ResponseFactory.http_400_bad_request()) 
+                        
                 except IndexError:
                     # format error or function unsupported
                     self.client_socket.sendall(ResponseFactory.http_400_bad_request())
@@ -302,6 +286,31 @@ class ServerThread(threading.Thread):
         else:
             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
             return
+        
+        if forbidden:
+            self.client_socket.sendall(ResponseFactory.http_403_forbidden())
+            return
+
+        if os.path.exists(query[0]):
+            pass
+        else:
+            self.client_socket.sendall(ResponseFactory.http_404_not_found())
+            return
+        
+        if Match == False:
+            self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+            return
+        
+        if method == 'get':
+            self.view(url,session_id)
+        elif method == 'head':
+            self.Head(url)    
+        else: 
+            if func == "upload":
+                self.upload(path, request, boundary, session_id)
+            else:
+                self.delete(path, session_id)   
+
 
 
 
@@ -315,22 +324,6 @@ class ServerThread(threading.Thread):
             addr = parts[0]
             addr = "./" + folder + addr
             parameter = parts[1]
-        
-        if os.path.exists(addr):
-            if os.path.isfile(addr):
-                if parameter is None:
-                    pass
-                elif judgePara(parameter):
-                    pass
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                    return
-            else:
-                if parameter is None or parameter == 'SUSTech-HTTP=0' or parameter == 'SUSTech-HTTP=1':
-                    pass
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                    return 
             print("HEAD: URL valid")
             response = ResponseFactory.http_200_ok()
             response += b"Content-Type: application/octet-stream\r\n"
@@ -338,14 +331,13 @@ class ServerThread(threading.Thread):
             response += b"\r\n"
             self.client_socket.sendall(response)
             return
-        else:
-            print("HEAD: URL invalid")
-            self.client_socket.sendall(ResponseFactory.http_404_not_found())
-            return
+
 
     def view(self, url, session_id):
         parts = url.split("?")
         parameter = None
+        SUSTech_HTTP = 0 
+        chunked = 0
         if len(parts) == 1:
             addr = parts[0]
             addr = "./" + folder + addr
@@ -353,61 +345,74 @@ class ServerThread(threading.Thread):
             addr = parts[0]
             addr = "./" + folder + addr
             parameter = parts[1]
-        if os.path.exists(addr):
-            if os.path.isfile(addr):
-                self.download(addr, parameter)
-                return
-            else:
-                if (parameter == "SUSTech-HTTP=0") or (parameter is None):
-                    contents = os.listdir(addr)
-                    head = (ResponseFactory.http_200_ok()
-                            + b"Content-type: text/html; charset=utf-8\r\n"
-                            )
-                    if session_id:
-                        head += f'Set-Cookie: {session_id}\r\n'.encode()
-                    content = (
-                            b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
-                            + b'<html>\n'
-                            + b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
-                            + b'<title>Directory listing for ' + addr.encode('utf-8') + b'</title>\n'
-                            + b'</head>\n'
-                            + b'<body>\n'
-                            + b'<h1>Directory listing for ' + addr.encode('utf-8') + b'</h1>\n'
-                            + b'<hr>\n'
-                            + b'<ul>\n')
+        
+        if parameter:
+            para = parameter.split("&")
+            for p in para:
+                arg, val = p.split('=')
+                if arg == 'SUSTech-HTTP':
+                    if val == '0':
+                        SUSTech_HTTP = 0
+                    elif val == '1':
+                        SUSTech_HTTP = 1
+                elif arg == 'chunked':
+                    if val == '0':
+                        chunked = 0
+                    elif val == '1':
+                        chunked = 1
 
-                    for item in contents:
-                        item_path = os.path.join(addr, item)
-                        if os.path.isdir(item_path):
-                            item = item + '/'
-                        content = content + b'<li><a href="' + item.encode('utf-8') + b'">' + item.encode(
-                            'utf-8') + b'</a></li>\n'
-                    content = content + b'</ul>\n<hr>\n</body>\n</html>\n'
-                    length = len(content)
-                    head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
-                    response = head + content
-                    self.client_socket.sendall(response)
-                    return
-
-                elif parameter == "SUSTech-HTTP=1":
-                    contents = os.listdir(addr)
-                    content = json.dumps(contents)
-                    head = (ResponseFactory.http_200_ok()
-                            + b"Content-type: application/json\r\n"
-                            + b"Content-Length: " + str(len(content)).encode('utf-8') + b"\r\n\r\n"
-                            )
-                    content = content.encode("utf-8")
-                    response = head + content
-                    self.client_socket.sendall(response)
-                    return
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                    return
-        else:
-            self.client_socket.sendall(ResponseFactory.http_404_not_found())
+        if os.path.isfile(addr):
+            self.download(addr,chunked)
             return
+        
 
-    def download(self, addr, parameter):
+        else:
+            if SUSTech_HTTP == 0:
+                contents = os.listdir(addr)
+                head = (ResponseFactory.http_200_ok()
+                        + b"Content-type: text/html; charset=utf-8\r\n"
+                        )
+                if session_id:
+                    head += f'Set-Cookie: {session_id}\r\n'.encode()
+                content = (
+                        b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
+                        + b'<html>\n'
+                        + b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
+                        + b'<title>Directory listing for ' + addr.encode('utf-8') + b'</title>\n'
+                        + b'</head>\n'
+                        + b'<body>\n'
+                        + b'<h1>Directory listing for ' + addr.encode('utf-8') + b'</h1>\n'
+                        + b'<hr>\n'
+                        + b'<ul>\n')
+
+                for item in contents:
+                    item_path = os.path.join(addr, item)
+                    if os.path.isdir(item_path):
+                        item = item + '/'
+                    content = content + b'<li><a href="' + item.encode('utf-8') + b'">' + item.encode(
+                        'utf-8') + b'</a></li>\n'
+                content = content + b'</ul>\n<hr>\n</body>\n</html>\n'
+                length = len(content)
+                head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
+                response = head + content
+                self.client_socket.sendall(response)
+                return
+
+            else:
+                contents = os.listdir(addr)
+                content = json.dumps(contents)
+                head = (ResponseFactory.http_200_ok()
+                        + b"Content-type: application/json\r\n"
+                        + b"Content-Length: " + str(len(content)).encode('utf-8') + b"\r\n\r\n"
+                        )
+                content = content.encode("utf-8")
+                response = head + content
+                self.client_socket.sendall(response)
+                return
+            
+        
+
+    def download(self,addr,chuncked):
         mime_type, encoding = mimetypes.guess_type(addr)
         head = (ResponseFactory.http_200_ok() + b"Content-type: ")
         if mime_type:
@@ -420,25 +425,8 @@ class ServerThread(threading.Thread):
         with open(addr, 'rb') as f:
             content = f.read()
 
-        chuncked = False
-        para = parameter.split("&")
-        for p in para:
-            arg, val = p.split('=')
-            if arg == 'SUSTech-HTTP':
-                continue
-            elif arg == 'chunked':
-                if val == '0':
-                    chuncked = False
-                elif val == '1':
-                    chuncked = True
-                else:
-                    self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                    return
-            else:
-                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
-                return
 
-        if chuncked:
+        if chuncked == 0:
             length = len(content)
             head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
             response = head + content
