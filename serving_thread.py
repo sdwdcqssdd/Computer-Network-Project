@@ -45,12 +45,17 @@ def authenticate_by_auth(auth_info):
 
 
 def set_cookie(username):
+    print(session_path)
     if os.path.exists(session_path):
         lock = ServerThread.file_locks[session_path]
+        print("cookie path right")
         with lock:
+            print("get cookie lock")
             with open(session_path, 'r+') as session_file:
+                print("open success")
                 try:
                     data = json.load(session_file)
+                    print("load Cookie")
                     session_id = str(uuid.uuid1().hex)
                     data[session_id] = {
                         "username": username,
@@ -58,6 +63,7 @@ def set_cookie(username):
                     }
                     session_file.seek(0)
                     session_file.write(json.dumps(data))
+                    print("write Cookie")
                     return session_id
                 except (json.decoder.JSONDecodeError, KeyError):
                     return None
@@ -222,7 +228,7 @@ class ServerThread(threading.Thread):
 
     def URL_handler(self, method, url, boundary, session_id, request):
         query = url.split("?")
-        print("upload or delete path:", query)
+        print("param info:", query)
         param_num = len(query) - 1
         Match = False
         forbidden = False
@@ -304,6 +310,7 @@ class ServerThread(threading.Thread):
         if method == 'get':
             self.view(url,session_id)
         elif method == 'head':
+            print("perform HEAD")
             self.Head(url)    
         else: 
             if func == "upload":
@@ -320,13 +327,19 @@ class ServerThread(threading.Thread):
         if len(parts) == 1:
             addr = parts[0]
             addr = "./" + folder + addr
+            response = ResponseFactory.http_200_ok()
+            response += b"Content-Type: text/html\r\n"
+            response += b"Content-Length: 0\r\n"
+            response += b"\r\n"
+            self.client_socket.sendall(response)
+            return
         else:
             addr = parts[0]
             addr = "./" + folder + addr
             parameter = parts[1]
             print("HEAD: URL valid")
             response = ResponseFactory.http_200_ok()
-            response += b"Content-Type: application/octet-stream\r\n"
+            response += b"Content-Type: text/html\r\n"
             response += b"Content-Length: 0\r\n"
             response += b"\r\n"
             self.client_socket.sendall(response)
