@@ -103,6 +103,8 @@ class ResponseFactory:
     def http_401_unauthorized(self):
         head = b"HTTP/1.1 401 Unauthorized\r\n"
         head += b"WWW-Authenticated: Basic realm='Authorization Required'\r\n"
+        head += b"Content-Type: application/octet-stream\r\n"
+        head += b"Content-Length: 0\r\n"
         head += b"\r\n"
         return head
 
