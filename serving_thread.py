@@ -60,7 +60,7 @@ def set_cookie(username):
                     session_id = str(uuid.uuid1().hex)
                     data[session_id] = {
                         "username": username,
-                        "time_expire": time.time() + 60
+                        "time_expire": time.time() + 10
                     }
                     session_file.seek(0)
                     session_file.write(json.dumps(data))
@@ -134,7 +134,7 @@ class ServerThread(threading.Thread):
                         self.client_socket.settimeout(None)
                         break 
                 print("get a request of thread", self.name)
-                print("request content:", repr(request))
+                # print("request content:", repr(request))
                 lines = request.split(b"\r\n")
                 cookie_verification = False
 
@@ -165,47 +165,47 @@ class ServerThread(threading.Thread):
                     if line.startswith(b"GET"):
                         print("GET method")
                         method = "get"
-                        contents = line.split(b" ")
-                        url = contents[1].decode()
+                        contents = line.decode().split(" ")
+                        url = contents[1]
                         print(url)
                     elif line.startswith(b"Connection:"):
                         print("Check close request")
-                        content = line.split(b":", 1)[1].decode().strip()
+                        content = line.decode().split(":", 1)[1].strip()
                         if content.lower() == "close":
                             close = True
                     elif line.startswith(b"Authorization:"):
                         print("Have Auth Info")
-                        content = line.split(b" ")
+                        content = line.decode().split(" ")
                         if len(content) != 3:
                             # format error, authentication should be False
                             continue
-                        auth_type = content[1].decode().strip()
-                        auth_content = content[2].decode().strip()
+                        auth_type = content[1].strip()
+                        auth_content = content[2].strip()
                         if auth_type != "Basic":
                             # only accept Basic, authentication should be False
                             continue
                         authentication_auth, self.username = authenticate_by_auth(auth_content)
                     elif line.startswith(b"Cookie:"):
                         print("Have Cookie Info")
-                        session_id = line.split(b"session-id=")[1].decode()
+                        session_id = line.decode().split("session-id=")[1]
                         print(session_id)
                         authentication_cookie = authenticate_by_cookie(session_id)
                     elif line.startswith(b"POST"):
                         print("POST Method")
                         method = "post"
-                        contents = line.split(b" ")
-                        url = contents[1].decode()
+                        contents = line.decode().split(" ")
+                        url = contents[1]
                         print(url)
                     elif line.startswith(b"HEAD"):
                         print("HEAD Method")
                         method = "head"
-                        contents = line.split(" ")
+                        contents = line.decode().split(" ")
                         url = contents[1]
                         print(url)
                     elif line.startswith(b"Content-Type:"):
-                        bound = line.split(b"boundary=")
+                        bound = line.decode().split("boundary=")
                         if len(bound) == 2:
-                            boundary = bound[1].decode()
+                            boundary = bound[1]
                 if not authentication_cookie:
                     if not authentication_auth:
                         self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
@@ -594,11 +594,11 @@ class ServerThread(threading.Thread):
             file_body = request.split(bound.encode())
             if len(file_body) != 3:
                 # format error
-                print("bound error", file_body, bound)
+                # print("bound error", file_body, bound)
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
             file_content = file_body[1].split(b"\r\n\r\n")
-            print("upload file content:", file_content)
+            # print("upload file content:", file_content)
             try:
                 data = file_content[1].strip(b"")
                 with open(path, "wb") as file_writer:
@@ -611,7 +611,7 @@ class ServerThread(threading.Thread):
                 if session_id:
                     response += f'Set-Cookie: session-id={session_id}\r\n'.encode()
                 response += b"\r\n"
-                print("upload response:", repr(response))
+                # print("upload response:", repr(response))
                 self.client_socket.sendall(response)
                 print("upload success")
             except IndexError:
