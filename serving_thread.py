@@ -124,11 +124,11 @@ class ServerThread(threading.Thread):
     def run(self):
         while True:
             try:
-                request = self.client_socket.recv(4096)
+                request = self.client_socket.recv(2*1024*1024)
                 self.client_socket.settimeout(0.05)
                 while True:
                     try:
-                        data = self.client_socket.recv(4096)
+                        data = self.client_socket.recv(2*1024*1024)
                         request += data
                     except socket.timeout:
                         self.client_socket.settimeout(None)
