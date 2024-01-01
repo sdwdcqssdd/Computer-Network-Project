@@ -233,12 +233,19 @@ class ServerThread(threading.Thread):
         Match = False
         forbidden = False
         if param_num == 0:  # no parameter
+            path = "./data" + query[0]
             if method == 'head':
                 Match = True
             elif method == 'get':
                 Match = True    
         elif param_num == 1:
-            if judgePara(query[1]):
+            path = "./data" + query[0]
+            if query[1] == "":
+                if method == 'head':
+                    Match = True
+                elif method == 'get':
+                    Match = True 
+            elif judgePara(query[1]):
                 if method == 'head':
                     Match = True
                 elif method == 'get':
@@ -297,7 +304,7 @@ class ServerThread(threading.Thread):
             self.client_socket.sendall(ResponseFactory.http_403_forbidden())
             return
 
-        if os.path.exists("./data" + query[0]):  # should be path relative to root dir?
+        if os.path.exists(path):
             pass
         else:
             self.client_socket.sendall(ResponseFactory.http_404_not_found())
@@ -310,13 +317,12 @@ class ServerThread(threading.Thread):
         if method == 'get':
             self.view(url,session_id)
         elif method == 'head':
-            print("perform HEAD")
             self.Head(url)    
         else: 
             if func == "upload":
                 self.upload(path, request, boundary, session_id)
             else:
-                self.delete(path, session_id)   
+                self.delete(path, session_id)      
 
 
 
