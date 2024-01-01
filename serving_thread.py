@@ -123,10 +123,10 @@ class ServerThread(threading.Thread):
     def run(self):
         while True:
             try:
-                request = self.client_socket.recv(1024).decode()
+                request = self.client_socket.recv(1024)
                 print("get a request of thread", self.name)
                 print("request content:", repr(request))
-                lines = request.split("\r\n")
+                lines = request.split(b"\r\n")
                 cookie_verification = False
 
                 authentication_auth = False  # need to check every request
@@ -153,20 +153,20 @@ class ServerThread(threading.Thread):
                 #     continue
 
                 for line in lines:
-                    if line.startswith("GET"):
+                    if line.startswith(b"GET"):
                         print("GET method")
                         method = "get"
-                        contents = line.split(" ")
+                        contents = line.decode().split(" ")
                         url = contents[1]
                         print(url)
-                    elif line.startswith("Connection:"):
+                    elif line.startswith(b"Connection:"):
                         print("Check close request")
-                        content = line.split(":", 1)[1].strip()
+                        content = line.decode().split(":", 1)[1].strip()
                         if content.lower() == "close":
                             close = True
-                    elif line.startswith("Authorization:"):
+                    elif line.startswith(b"Authorization:"):
                         print("Have Auth Info")
-                        content = line.split(" ")
+                        content = line.decode().split(" ")
                         if len(content) != 3:
                             # format error, authentication should be False
                             continue
@@ -176,25 +176,25 @@ class ServerThread(threading.Thread):
                             # only accept Basic, authentication should be False
                             continue
                         authentication_auth, self.username = authenticate_by_auth(auth_content)
-                    elif line.startswith("Cookie:"):
+                    elif line.startswith(b"Cookie:"):
                         print("Have Cookie Info")
-                        session_id = line.split("session-id=")[1]
+                        session_id = line.decode().split("session-id=")[1]
                         print(session_id)
                         authentication_cookie = authenticate_by_cookie(session_id)
-                    elif line.startswith("POST"):
+                    elif line.startswith(b"POST"):
                         print("POST Method")
                         method = "post"
-                        contents = line.split(" ")
+                        contents = line.decode().split(" ")
                         url = contents[1]
                         print(url)
-                    elif line.startswith("HEAD"):
+                    elif line.startswith(b"HEAD"):
                         print("HEAD Method")
                         method = "head"
-                        contents = line.split(" ")
+                        contents = line.decode().split(" ")
                         url = contents[1]
                         print(url)
-                    elif line.startswith("Content-Type:"):
-                        bound = line.split("boundary=")
+                    elif line.startswith(b"Content-Type:"):
+                        bound = line.decode().split("boundary=")
                         if len(bound) == 2:
                             boundary = bound[1]
                 if not authentication_cookie:
@@ -559,11 +559,11 @@ class ServerThread(threading.Thread):
             self.client_socket.sendall(ResponseFactory.http_404_not_found())
             return
         else:
-            lines = request.split("\r\n")
+            lines = request.split(b"\r\n")
             for line in lines:
-                if line.startswith("Content-Disposition:"):
+                if line.startswith(b"Content-Disposition:"):
                     try:
-                        name = line.split("filename=")[1]
+                        name = line.decode().split("filename=")[1]
                         file_name = name.strip()[1:-1]
                         print("upload filename:", file_name)
                     except IndexError:
@@ -576,18 +576,23 @@ class ServerThread(threading.Thread):
                 # cannot upload a folder
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
-            file_body = request.split(bound)
+            file_body = request.split(bound.encode())
+            print(bound.encode())
+            print(file_body)
             if len(file_body) != 3:
                 # format error
                 print("bound error", file_body, bound)
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
-            file_content = file_body[1].split("\r\n\r\n")
+            file_content = file_body[1].split(b"\r\n\r\n")
             print("upload file content:", file_content)
             try:
-                data = file_content[1].strip().encode()
+                data = file_content[1].strip()
+                print(data)
                 with open(path, "wb") as file_writer:
+                    file_writer.seek(0)
                     file_writer.write(data)
+                    file_writer.flush()
                 response = ResponseFactory.http_200_ok()
                 response += b"Content-Type: application/octet-stream\r\n"
                 response += b"Content-Length: 0\r\n"
