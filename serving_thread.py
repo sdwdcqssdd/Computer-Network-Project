@@ -476,11 +476,17 @@ class ServerThread(threading.Thread):
 
 
         if chuncked == 0:
-            length = len(content)
-            head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
-            response = head + content
-            self.client_socket.sendall(response)
-            return
+            try:
+                with open(addr, 'rb') as f:
+                    content = f.read()
+                length = len(content)
+                head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
+                response = head + content
+                self.client_socket.sendall(response)
+                return
+            except MemoryError:
+                self.client_socket.sendall(ResponseFactory.http_503_service_temporarily_unavailable())
+                return
         else:
             head += b'Transfer-Encoding: chunked\r\n\r\n'
             self.client_socket.sendall(head)
