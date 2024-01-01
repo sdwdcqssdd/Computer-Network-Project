@@ -241,10 +241,8 @@ class ServerThread(threading.Thread):
         elif param_num == 1:
             path = "./data" + query[0]
             if query[1] == "":
-                if method == 'head':
-                    Match = True
-                elif method == 'get':
-                    Match = True 
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                return
             elif judgePara(query[1]):
                 if method == 'head':
                     Match = True
