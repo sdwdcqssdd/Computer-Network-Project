@@ -178,7 +178,8 @@ class ServerThread(threading.Thread):
                         authentication_auth, self.username = authenticate_by_auth(auth_content)
                     elif line.startswith("Cookie:"):
                         print("Have Cookie Info")
-                        session_id = line.split(" ")[1]
+                        session_id = line.split("session-id=")[1]
+                        print(session_id)
                         authentication_cookie = authenticate_by_cookie(session_id)
                     elif line.startswith("POST"):
                         print("POST Method")
@@ -215,7 +216,7 @@ class ServerThread(threading.Thread):
                     response += b"Content-Type: application/octet-stream\r\n"
                     response += b"Content-Length: 0\r\n"
                     if session_id:
-                        response += f'Set-Cookie: {session_id}\r\n'.encode()
+                        response += f'Set-Cookie: session-id={session_id}\r\n'.encode()
                     response += b"\r\n"
                     self.client_socket.sendall(response)
             except ConnectionAbortedError:  # in case the user close the connection suddenly without informing
@@ -258,26 +259,43 @@ class ServerThread(threading.Thread):
                             print("Full path:", path)
                             authority = path.split("/")[2]
                             print("whose folder:", authority)
+                            if authority != self.username:  # have no authority
+                                forbidden = True
                         except IndexError:
                             # path is null
                             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                             return
                         if func == "upload":
+                            if forbidden:
+                                self.client_socket.sendall(ResponseFactory.http_403_forbidden())
+                                return
+                            if path[-1] != '/':
+                                path += "/"
+                            print("upload path:", path)
+                            if not os.path.isdir(path):
+                                # can only upload to a folder
+                                print("upload path not folder")
+                                self.client_socket.sendall(ResponseFactory.http_404_not_found())
+                                return
                             if method != "post":
-                                Match = False
-                            else:
-                                Match = True
-                                if authority != self.username:  # have no authority
-                                    forbidden = True
+                                self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                                return
+                            self.upload(path, request, boundary, session_id)
+                            return
                                 
                         elif func == "delete":
+                            if forbidden:
+                                self.client_socket.sendall(ResponseFactory.http_403_forbidden())
+                                return
+                            if not os.path.exists(path):
+                                self.client_socket.sendall(ResponseFactory.http_404_not_found())
+                                return
                             if method != "post":
-                                Match = False
-                            else:
-                                Match = True
-                                if authority != self.username:  # have no authority
-                                    forbidden = True
-                              
+                                self.client_socket.sendall(ResponseFactory.http_405_method_not_allowed())
+                                return
+                            self.delete(path, session_id)
+                            return
+
                         else:
                             # unsupported function, URL cannot be resolved
                             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
@@ -292,10 +310,6 @@ class ServerThread(threading.Thread):
         else:
             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
             return
-        
-        if forbidden:
-            self.client_socket.sendall(ResponseFactory.http_403_forbidden())
-            return
 
         if os.path.exists("./data" + query[0]):  # should be path relative to root dir?
             pass
@@ -308,20 +322,23 @@ class ServerThread(threading.Thread):
             return
         
         if method == 'get':
-            self.view(url,session_id)
+            self.view(url, session_id)
         elif method == 'head':
             print("perform HEAD")
-            self.Head(url)    
-        else: 
-            if func == "upload":
-                self.upload(path, request, boundary, session_id)
-            else:
-                self.delete(path, session_id)   
+            self.Head(url, session_id)
+        else:
+            self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+            return
+        # else:
+        #     if func == "upload":
+        #         self.upload(path, request, boundary, session_id)
+        #     else:
+        #         self.delete(path, session_id)
 
 
 
 
-    def Head(self, url):
+    def Head(self, url, session_id):
         parts = url.split("?")
         parameter = None
         if len(parts) == 1:
@@ -330,6 +347,8 @@ class ServerThread(threading.Thread):
             response = ResponseFactory.http_200_ok()
             response += b"Content-Type: text/html\r\n"
             response += b"Content-Length: 0\r\n"
+            if session_id:
+                response += f'Set-Cookie: session-id={session_id}\r\n'.encode()
             response += b"\r\n"
             self.client_socket.sendall(response)
             return
@@ -341,6 +360,8 @@ class ServerThread(threading.Thread):
             response = ResponseFactory.http_200_ok()
             response += b"Content-Type: text/html\r\n"
             response += b"Content-Length: 0\r\n"
+            if session_id:
+                response += f'Set-Cookie: session-id={session_id}\r\n'.encode()
             response += b"\r\n"
             self.client_socket.sendall(response)
             return
@@ -375,7 +396,7 @@ class ServerThread(threading.Thread):
                         chunked = 1
 
         if os.path.isfile(addr):
-            self.download(addr,chunked)
+            self.download(addr,chunked, session_id)
             return
         
 
@@ -386,7 +407,7 @@ class ServerThread(threading.Thread):
                         + b"Content-type: text/html; charset=utf-8\r\n"
                         )
                 if session_id:
-                    head += f'Set-Cookie: {session_id}\r\n'.encode()
+                    head += f'Set-Cookie: session-id={session_id}\r\n'.encode()
                 content = (
                         b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
                         + b'<html>\n'
@@ -408,6 +429,7 @@ class ServerThread(threading.Thread):
                 length = len(content)
                 head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
                 response = head + content
+                print(response)
                 self.client_socket.sendall(response)
                 return
 
@@ -416,8 +438,11 @@ class ServerThread(threading.Thread):
                 content = json.dumps(contents)
                 head = (ResponseFactory.http_200_ok()
                         + b"Content-type: application/json\r\n"
-                        + b"Content-Length: " + str(len(content)).encode('utf-8') + b"\r\n\r\n"
+                        + b"Content-Length: " + str(len(content)).encode('utf-8') + b"\r\n"
                         )
+                if session_id:
+                    head += f'Set-Cookie: session-id={session_id}\r\n'.encode()
+                head += b'\r\n'
                 content = content.encode("utf-8")
                 response = head + content
                 self.client_socket.sendall(response)
@@ -425,7 +450,7 @@ class ServerThread(threading.Thread):
             
         
 
-    def download(self,addr,chuncked):
+    def download(self,addr,chuncked, session_id):
         mime_type, encoding = mimetypes.guess_type(addr)
         head = (ResponseFactory.http_200_ok() + b"Content-type: ")
         if mime_type:
@@ -434,7 +459,9 @@ class ServerThread(threading.Thread):
             head += b'application/octet-stream'
         if encoding:
             head += b"; charset=" + encoding.encode('utf-8')
-        head += b"\r\n"
+        head += b'\r\n'
+        if session_id:
+            head += f'Set-Cookie: session-id={session_id}\r\n'.encode()
         with open(addr, 'rb') as f:
             content = f.read()
 
@@ -556,7 +583,7 @@ class ServerThread(threading.Thread):
                 response += b"Content-Type: application/octet-stream\r\n"
                 response += b"Content-Length: 0\r\n"
                 if session_id:
-                    response += f'Set-Cookie: {session_id}\r\n'.encode()
+                    response += f'Set-Cookie: session-id={session_id}\r\n'.encode()
                 response += b"\r\n"
                 print("upload response:", repr(response))
                 self.client_socket.sendall(response)
@@ -572,9 +599,9 @@ class ServerThread(threading.Thread):
         # return
 
     def delete(self, path, session_id):
-        if not os.path.exists(path):
-            self.client_socket.sendall(ResponseFactory.http_404_not_found())
-            return
+        # if not os.path.exists(path):
+        #     self.client_socket.sendall(ResponseFactory.http_404_not_found())
+        #     return
         if os.path.isfile(path):
             os.remove(path)
         else:
@@ -583,7 +610,7 @@ class ServerThread(threading.Thread):
         response += b"Content-Type: application/octet-stream\r\n"
         response += b"Content-Length: 0\r\n"
         if session_id:
-            response += f'Set-Cookie: {session_id}\r\n'.encode()
+            response += f'Set-Cookie: session-id={session_id}\r\n'.encode()
         response += b"\r\n"
         print("delete response:", repr(response))
         self.client_socket.sendall(response)
