@@ -234,12 +234,17 @@ class ServerThread(threading.Thread):
         Match = False
         forbidden = False
         if param_num == 0:  # no parameter
+            path = "./data" + query[0]
             if method == 'head':
                 Match = True
             elif method == 'get':
                 Match = True    
         elif param_num == 1:
-            if judgePara(query[1]):
+            path = "./data" + query[0]
+            if query[1] == "":
+                self.client_socket.sendall(ResponseFactory.http_400_bad_request())
+                return 
+            elif judgePara(query[1]):
                 if method == 'head':
                     Match = True
                 elif method == 'get':
@@ -310,8 +315,12 @@ class ServerThread(threading.Thread):
         else:
             self.client_socket.sendall(ResponseFactory.http_400_bad_request())
             return
+        
+        # if forbidden:
+        #     self.client_socket.sendall(ResponseFactory.http_403_forbidden())
+        #     return
 
-        if os.path.exists("./data" + query[0]):  # should be path relative to root dir?
+        if os.path.exists(path):
             pass
         else:
             self.client_socket.sendall(ResponseFactory.http_404_not_found())
