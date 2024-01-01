@@ -598,7 +598,7 @@ class ServerThread(threading.Thread):
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
             file_content = file_body[1].split(b"\r\n\r\n")
-            print("upload file content:", file_content)
+            # print("upload file content:", file_content)
             try:
                 data = file_content[1].strip(b"")
                 with open(path, "wb") as file_writer:
