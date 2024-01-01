@@ -111,3 +111,28 @@ class ResponseFactory:
     @classmethod
     def http_200_ok(self):
         return b"HTTP/1.1 200 OK\r\nServer: HTTPServer\r\n"
+
+    @classmethod
+    def http_503_service_temporarily_unavailable(self):
+        content = b'<!DOCTYPE HTML PUBLIC "-//W3C//DTD HTML 4.01//EN" "http://www.w3.org/TR/html4/strict.dtd">\n'
+        content += b'<html>\n'
+        content += b'<meta http-equiv="Content-Type" content="text/html; charset=utf-8">\n'
+        content += b'<title>Server Error</title>\n'
+        content += b'</head>\n'
+        content += b'<body>\n'
+        content += b'<h1>Server Error</h1>\n'
+        content += b'<p>Error code: 503</p>\n'
+        content += b'<p>Message: Service Temporarily Unavailable.</p>\n'
+        content += b'<p>Error code explanation: Server may have error.</p>\n'
+        content += b'</body>\n'
+        content += b'</html>\n'
+
+        head = b"HTTP/1.1 503 Service Temporarily Unavailable\r\n"
+        head += b"Server: HTTPServer\r\n"
+        head += b"Content-type: text/html; charset=utf-8\r\n"
+        head += b"Content-Length: " + str(len(content)).encode('utf-8') + b'\r\n'
+        head += b"\r\n"
+
+        response = head + content
+        return response
+

@@ -6,6 +6,7 @@ import json
 import uuid
 import shutil
 import time
+import socket
 from response_factory import ResponseFactory
 
 directory_path = "."
@@ -123,7 +124,15 @@ class ServerThread(threading.Thread):
     def run(self):
         while True:
             try:
-                request = self.client_socket.recv(1024)
+                request = self.client_socket.recv(4096)
+                self.client_socket.settimeout(0.05)
+                while True:
+                    try:
+                        data = self.client_socket.recv(4096)
+                        request += data
+                    except socket.timeout:
+                        self.client_socket.settimeout(None)
+                        break 
                 print("get a request of thread", self.name)
                 print("request content:", repr(request))
                 lines = request.split(b"\r\n")
@@ -156,47 +165,47 @@ class ServerThread(threading.Thread):
                     if line.startswith(b"GET"):
                         print("GET method")
                         method = "get"
-                        contents = line.decode().split(" ")
-                        url = contents[1]
+                        contents = line.split(b" ")
+                        url = contents[1].decode()
                         print(url)
                     elif line.startswith(b"Connection:"):
                         print("Check close request")
-                        content = line.decode().split(":", 1)[1].strip()
+                        content = line.split(b":", 1)[1].decode().strip()
                         if content.lower() == "close":
                             close = True
                     elif line.startswith(b"Authorization:"):
                         print("Have Auth Info")
-                        content = line.decode().split(" ")
+                        content = line.split(b" ")
                         if len(content) != 3:
                             # format error, authentication should be False
                             continue
-                        auth_type = content[1].strip()
-                        auth_content = content[2].strip()
+                        auth_type = content[1].decode().strip()
+                        auth_content = content[2].decode().strip()
                         if auth_type != "Basic":
                             # only accept Basic, authentication should be False
                             continue
                         authentication_auth, self.username = authenticate_by_auth(auth_content)
                     elif line.startswith(b"Cookie:"):
                         print("Have Cookie Info")
-                        session_id = line.decode().split("session-id=")[1]
+                        session_id = line.split(b"session-id=")[1].decode()
                         print(session_id)
                         authentication_cookie = authenticate_by_cookie(session_id)
                     elif line.startswith(b"POST"):
                         print("POST Method")
                         method = "post"
-                        contents = line.decode().split(" ")
-                        url = contents[1]
+                        contents = line.split(b" ")
+                        url = contents[1].decode()
                         print(url)
                     elif line.startswith(b"HEAD"):
                         print("HEAD Method")
                         method = "head"
-                        contents = line.decode().split(" ")
+                        contents = line.split(" ")
                         url = contents[1]
                         print(url)
                     elif line.startswith(b"Content-Type:"):
-                        bound = line.decode().split("boundary=")
+                        bound = line.split(b"boundary=")
                         if len(bound) == 2:
-                            boundary = bound[1]
+                            boundary = bound[1].decode()
                 if not authentication_cookie:
                     if not authentication_auth:
                         self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
@@ -476,11 +485,17 @@ class ServerThread(threading.Thread):
 
 
         if chuncked == 0:
-            length = len(content)
-            head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
-            response = head + content
-            self.client_socket.sendall(response)
-            return
+            try:
+                with open(addr, 'rb') as f:
+                    content = f.read()
+                length = len(content)
+                head = head + b'Content-Length: ' + str(length).encode('utf-8') + b'\r\n\r\n'
+                response = head + content
+                self.client_socket.sendall(response)
+                return
+            except MemoryError:
+                self.client_socket.sendall(ResponseFactory.http_503_service_temporarily_unavailable())
+                return
         else:
             head += b'Transfer-Encoding: chunked\r\n\r\n'
             self.client_socket.sendall(head)
@@ -560,10 +575,10 @@ class ServerThread(threading.Thread):
             return
         else:
             lines = request.split(b"\r\n")
-            for line in lines:
+            for line in lines:  
                 if line.startswith(b"Content-Disposition:"):
                     try:
-                        name = line.decode().split("filename=")[1]
+                        name = line.split(b"filename=")[1].decode()
                         file_name = name.strip()[1:-1]
                         print("upload filename:", file_name)
                     except IndexError:
@@ -577,8 +592,6 @@ class ServerThread(threading.Thread):
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
             file_body = request.split(bound.encode())
-            print(bound.encode())
-            print(file_body)
             if len(file_body) != 3:
                 # format error
                 print("bound error", file_body, bound)
@@ -587,8 +600,7 @@ class ServerThread(threading.Thread):
             file_content = file_body[1].split(b"\r\n\r\n")
             print("upload file content:", file_content)
             try:
-                data = file_content[1].strip()
-                print(data)
+                data = file_content[1].strip(b"")
                 with open(path, "wb") as file_writer:
                     file_writer.seek(0)
                     file_writer.write(data)
