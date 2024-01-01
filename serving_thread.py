@@ -6,6 +6,7 @@ import json
 import uuid
 import shutil
 import time
+import socket
 from response_factory import ResponseFactory
 
 directory_path = "."
@@ -123,10 +124,18 @@ class ServerThread(threading.Thread):
     def run(self):
         while True:
             try:
-                request = self.client_socket.recv(1024).decode()
+                request = self.client_socket.recv(4096)
+                self.client_socket.settimeout(0.05)
+                while True:
+                    try:
+                        data = self.client_socket.recv(4096)
+                        request += data
+                    except socket.timeout:
+                        self.client_socket.settimeout(None)
+                        break 
                 print("get a request of thread", self.name)
                 print("request content:", repr(request))
-                lines = request.split("\r\n")
+                lines = request.split(b"\r\n")
                 cookie_verification = False
 
                 authentication_auth = False  # need to check every request
@@ -153,50 +162,50 @@ class ServerThread(threading.Thread):
                 #     continue
 
                 for line in lines:
-                    if line.startswith("GET"):
+                    if line.startswith(b"GET"):
                         print("GET method")
                         method = "get"
-                        contents = line.split(" ")
-                        url = contents[1]
+                        contents = line.split(b" ")
+                        url = contents[1].decode()
                         print(url)
-                    elif line.startswith("Connection:"):
+                    elif line.startswith(b"Connection:"):
                         print("Check close request")
-                        content = line.split(":", 1)[1].strip()
+                        content = line.split(b":", 1)[1].decode().strip()
                         if content.lower() == "close":
                             close = True
-                    elif line.startswith("Authorization:"):
+                    elif line.startswith(b"Authorization:"):
                         print("Have Auth Info")
-                        content = line.split(" ")
+                        content = line.split(b" ")
                         if len(content) != 3:
                             # format error, authentication should be False
                             continue
-                        auth_type = content[1].strip()
-                        auth_content = content[2].strip()
+                        auth_type = content[1].decode().strip()
+                        auth_content = content[2].decode().strip()
                         if auth_type != "Basic":
                             # only accept Basic, authentication should be False
                             continue
                         authentication_auth, self.username = authenticate_by_auth(auth_content)
-                    elif line.startswith("Cookie:"):
+                    elif line.startswith(b"Cookie:"):
                         print("Have Cookie Info")
-                        session_id = line.split("session-id=")[1]
+                        session_id = line.split(b"session-id=")[1].decode()
                         print(session_id)
                         authentication_cookie = authenticate_by_cookie(session_id)
-                    elif line.startswith("POST"):
+                    elif line.startswith(b"POST"):
                         print("POST Method")
                         method = "post"
-                        contents = line.split(" ")
-                        url = contents[1]
+                        contents = line.split(b" ")
+                        url = contents[1].decode()
                         print(url)
-                    elif line.startswith("HEAD"):
+                    elif line.startswith(b"HEAD"):
                         print("HEAD Method")
                         method = "head"
-                        contents = line.split(" ")
-                        url = contents[1]
+                        contents = line.split(b" ")
+                        url = contents[1].decode()
                         print(url)
-                    elif line.startswith("Content-Type:"):
-                        bound = line.split("boundary=")
+                    elif line.startswith(b"Content-Type:"):
+                        bound = line.split(b"boundary=")
                         if len(bound) == 2:
-                            boundary = bound[1]
+                            boundary = bound[1].decode()
                 if not authentication_cookie:
                     if not authentication_auth:
                         self.client_socket.sendall(ResponseFactory.http_401_unauthorized())
@@ -565,11 +574,11 @@ class ServerThread(threading.Thread):
             self.client_socket.sendall(ResponseFactory.http_404_not_found())
             return
         else:
-            lines = request.split("\r\n")
-            for line in lines:
-                if line.startswith("Content-Disposition:"):
+            lines = request.split(b"\r\n")
+            for line in lines:  
+                if line.startswith(b"Content-Disposition:"):
                     try:
-                        name = line.split("filename=")[1]
+                        name = line.split(b"filename=")[1].decode()
                         file_name = name.strip()[1:-1]
                         print("upload filename:", file_name)
                     except IndexError:
@@ -582,16 +591,16 @@ class ServerThread(threading.Thread):
                 # cannot upload a folder
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
-            file_body = request.split(bound)
+            file_body = request.split(bound.encode())
             if len(file_body) != 3:
                 # format error
                 print("bound error", file_body, bound)
                 self.client_socket.sendall(ResponseFactory.http_400_bad_request())
                 return
-            file_content = file_body[1].split("\r\n\r\n")
+            file_content = file_body[1].split(b"\r\n\r\n")
             print("upload file content:", file_content)
             try:
-                data = file_content[1].strip().encode()
+                data = file_content[1].strip(b"")
                 with open(path, "wb") as file_writer:
                     file_writer.write(data)
                 response = ResponseFactory.http_200_ok()
